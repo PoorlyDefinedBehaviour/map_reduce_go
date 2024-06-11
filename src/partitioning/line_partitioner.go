@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path"
@@ -23,84 +24,89 @@ func (partitioner *LinePartitioner) Partition(filepath string, maxNumberOfPartit
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("closing input file: filepath=%s %w", filepath, err))
+			err = errors.Join(err, fmt.Errorf("closing input file: filepath=%s %w", filepath, closeErr))
 		}
 	}()
-	fileInfo, err := file.Stat()
+
+	numberOfLines, err := countLinesInFile(bufio.NewReader(file))
 	if err != nil {
-		return nil, fmt.Errorf("getting file stats: %w", err)
+		return nil, fmt.Errorf("counting number of lines in the file: %w", err)
+	}
+	// Counting the lines moves the internal file pointer. Let's go back to the start because we want to read every line.
+	if _, err := file.Seek(0, 0); err != nil {
+		return nil, fmt.Errorf("seeking to the start of the input file after counting lines: %w", err)
 	}
 
-	// partition per lines per file
-	// create n partition files
-	// write lines to files in round robin order
+	maxLinesPerPartition := int64(math.Ceil(float64(numberOfLines) / float64(maxNumberOfPartitions)))
 
-	partitionSizeInBytes := int64(math.Ceil(float64(fileInfo.Size()+int64(maxNumberOfPartitions)) / float64(maxNumberOfPartitions)))
 	partitionFilePaths = make([]string, 0, maxNumberOfPartitions)
 
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, partitionSizeInBytes), int(partitionSizeInBytes))
 
 	directory, _ := path.Split(filepath)
 
-	partitionBuffer := bytes.NewBuffer(make([]byte, 0, partitionSizeInBytes))
-	partitionNumber := 0
+	for partitionNumber := range maxNumberOfPartitions {
+		partitionFilePath := fmt.Sprintf("%s_input_%d", directory, partitionNumber)
 
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Partition buffer is full, write to disk.
-		// + 1 for the new line that will be added at the end.
-		if partitionBuffer.Len()+len(line)+1 > int(partitionSizeInBytes) && partitionNumber < int(maxNumberOfPartitions) {
-			partitionFilePath, err := writePartitionFile(directory, partitionNumber, partitionBuffer.Bytes())
-			if err != nil {
-				return partitionFilePaths, fmt.Errorf("writing partition file to disk: %w", err)
-			}
-			partitionBuffer.Reset()
-			partitionFilePaths = append(partitionFilePaths, partitionFilePath)
-			partitionNumber++
-		}
-
-		if _, err := partitionBuffer.WriteString(line); err != nil {
-			return nil, fmt.Errorf("writing to parititon buffer: %w", err)
-		}
-		if err := partitionBuffer.WriteByte('\n'); err != nil {
-			return nil, fmt.Errorf("writing new line to partition buffer: %w", err)
-		}
-	}
-
-	// There's some data in the partition buffer, write to disk.
-	if partitionBuffer.Len() > 0 {
-		partitionFilePath, err := writePartitionFile(directory, partitionNumber, partitionBuffer.Bytes())
+		partitionFile, err := os.OpenFile(partitionFilePath, os.O_RDWR|os.O_CREATE, 0644)
 		if err != nil {
-			return partitionFilePaths, fmt.Errorf("writing partition file to disk: %w", err)
+			return nil, fmt.Errorf("creating/opening partition file: path=%s %w", partitionFilePath, err)
 		}
-		partitionBuffer.Reset()
+		defer func() {
+			if closeErr := partitionFile.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("closing partition file: path=%s %w", partitionFilePath, closeErr))
+			}
+		}()
+
+		for range maxLinesPerPartition {
+			// Reached the end of the file.
+			if !scanner.Scan() {
+				if err := partitionFile.Sync(); err != nil {
+					return nil, fmt.Errorf("syncing partition file: path=%s %w", partitionFilePath, err)
+				}
+
+				partitionFilePaths = append(partitionFilePaths, partitionFilePath)
+
+				return partitionFilePaths, nil
+			}
+
+			if _, err := partitionFile.Write(scanner.Bytes()); err != nil {
+				return nil, fmt.Errorf("writing to partition file: %w", err)
+			}
+			if _, err := partitionFile.Write([]byte{'\n'}); err != nil {
+				return nil, fmt.Errorf("writing \\n to partition file: %w", err)
+			}
+		}
+
+		if err := partitionFile.Sync(); err != nil {
+			return nil, fmt.Errorf("syncing partition file: path=%s %w", partitionFilePath, err)
+		}
+
 		partitionFilePaths = append(partitionFilePaths, partitionFilePath)
 	}
 
 	return partitionFilePaths, nil
 }
 
-func writePartitionFile(directory string, partitionNumber int, buffer []byte) (partitionFilePath string, err error) {
-	partitionFilePath = fmt.Sprintf("%s_input_%d", directory, partitionNumber)
+// Returns the number of lines in the reader by counting the number of times \n appears.
+func countLinesInFile(reader io.Reader) (int, error) {
+	const bufferSizeInBytes = 32 * 1024
+	buffer := make([]byte, bufferSizeInBytes)
 
-	partitionFile, err := os.OpenFile(partitionFilePath, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return partitionFilePath, fmt.Errorf("creating/opening partition file: filepath=%s %w", partitionFilePath, err)
-	}
-	defer func() {
-		if closeErr := partitionFile.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("closing partiiton file: %w", closeErr))
+	count := 0
+
+	lineSeparator := []byte{'\n'}
+
+	for {
+		bytesRead, err := reader.Read(buffer)
+		count += bytes.Count(buffer[:bytesRead], lineSeparator)
+
+		if errors.Is(err, io.EOF) {
+			return count, nil
 		}
-	}()
-	bytesWritten, err := partitionFile.Write(buffer)
-	if err != nil {
-		return partitionFilePath, fmt.Errorf("writing to input partition file: bytesWritten=%d %w", bytesWritten, err)
-	}
-	if err := partitionFile.Sync(); err != nil {
-		return partitionFilePath, fmt.Errorf("syncing partition file: filepath=%s %w", partitionFilePath, err)
-	}
 
-	return partitionFilePath, nil
+		if err != nil {
+			return count, fmt.Errorf("reading file contents: %w", err)
+		}
+	}
 }
