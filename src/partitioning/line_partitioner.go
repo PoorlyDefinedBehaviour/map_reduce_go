@@ -36,6 +36,9 @@ func (partitioner *LinePartitioner) Partition(filepath string, maxNumberOfPartit
 	if _, err := file.Seek(0, 0); err != nil {
 		return nil, fmt.Errorf("seeking to the start of the input file after counting lines: %w", err)
 	}
+	if numberOfLines == 0 {
+		return nil, nil
+	}
 
 	maxLinesPerPartition := int64(math.Ceil(float64(numberOfLines) / float64(maxNumberOfPartitions)))
 
