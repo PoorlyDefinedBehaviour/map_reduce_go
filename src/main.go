@@ -5,12 +5,16 @@ import (
 	"hash/maphash"
 	"strconv"
 	"strings"
+
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/partitioning"
 )
 
 type Iterator struct {
 }
 
-func (iter *Iterator) Next() (bool, string)
+func (iter *Iterator) Next() (bool, string) {
+	panic("todo")
+}
 
 type Input struct {
 	File string
@@ -18,10 +22,9 @@ type Input struct {
 	Folder              string
 	NumberOfMapTasks    uint32
 	NumberOfReduceTasks uint32
-	// The function used to partition the output of the Map tasks.
-	PartitionBy func(key string, numberOfReduceTasks uint32) int64
-	Map         func(key, value string, emit func(key, value string)) error
-	Reduce      func(key string, valuesIter Iterator, emit func(key, value string)) error
+	NumberOfPartitions  uint32
+	Map                 func(key, value string, emit func(key, value string)) error
+	Reduce              func(key string, valuesIter Iterator, emit func(key, value string)) error
 }
 
 // [Input] after it has been validated.
@@ -37,22 +40,18 @@ func defaultPartitionFunction(key string, numberOfReduceTasks uint32) int64 {
 	return int64(hash.Sum64()) % int64(numberOfReduceTasks)
 }
 
-func setInputDefaults(input *Input) error {
-	if input.PartitionBy == nil {
-		input.PartitionBy = defaultPartitionFunction
-	}
-	return nil
-}
-
 func validateInput(input *Input) (ValidatedInput, error) {
+	if input.File == "" {
+		return ValidatedInput{}, fmt.Errorf("input file path is required")
+	}
+	if input.Folder == "" {
+		return ValidatedInput{}, fmt.Errorf("folder to store intermediary files is required")
+	}
 	if input.NumberOfMapTasks == 0 {
 		return ValidatedInput{}, fmt.Errorf("number of map tasks cannot be 0")
 	}
 	if input.NumberOfReduceTasks == 0 {
 		return ValidatedInput{}, fmt.Errorf("number of reduce tasks cannot be 0")
-	}
-	if input.PartitionBy == nil {
-		return ValidatedInput{}, fmt.Errorf("partition function is required")
 	}
 	if input.Map == nil {
 		return ValidatedInput{}, fmt.Errorf("map function is required")
@@ -63,44 +62,34 @@ func validateInput(input *Input) (ValidatedInput, error) {
 	return ValidatedInput{value: input}, nil
 }
 
-func Run(input Input) error {
-	if err := setInputDefaults(&input); err != nil {
-		return fmt.Errorf("setting input config defaults: %w", err)
-	}
-
+func Run(input Input, partitioner partitioning.Partitioner) error {
 	validatedInput, err := validateInput(&input)
-	return fmt.Errorf("invalid input config: %w", err)
-
-	if err := partitionFile(input.File, input.Folder); err != nil {
-		return fmt.Errorf("partitioning input file: file=%s folder=%s %w", input.File, input.Folder, err)
+	if err != nil {
+		return fmt.Errorf("invalid input config: %w", err)
 	}
 
+	partitionFilePaths, err := partitioner.Partition(validatedInput.value.File, input.Folder, validatedInput.value.NumberOfPartitions)
+	if err != nil {
+		return fmt.Errorf("partitioning input file: %w", err)
+	}
+	fmt.Printf("\n\naaaaaaa partitionFilePaths %+v\n\n", partitionFilePaths)
+
+	// TODO: partition by user defined partition function after Map.
+
 	return nil
 }
-
-func partitionFile(filepath string, folder string) error {
-	return nil
-}
-
-// mapreduce.Run(mapreduce.Input{
-//   PartitionBy: func(key string) int64 {
-// 		panic("todo")
-// 	},
-// 	Map: func(key, value string, emit func (string)) {
-//
-// 	},
-// 	Reduce: func(key string, valuesIter Iterator, emit func(string)) {
-//
-// 	}
-// })
 
 func main() {
 	err := Run(Input{
+		File:                "./dev/input_word_count.txt",
+		Folder:              "./tmp",
+		NumberOfPartitions:  3,
 		NumberOfMapTasks:    3,
 		NumberOfReduceTasks: 1,
 		Map: func(filename string, contents string, emit func(key, value string)) error {
+			fmt.Printf("\n\naaaaaaa Map: filename %+v\n\n", filename)
 			for _, word := range strings.Split(contents, " ") {
-				trimmedWord := strings.Trim(word, "  ")
+				trimmedWord := strings.Trim(word, " ")
 				if trimmedWord == "" {
 					continue
 				}
@@ -111,7 +100,7 @@ func main() {
 			return nil
 		},
 		Reduce: func(word string, valuesIter Iterator, emit func(key, value string)) error {
-			var count int64 = 0
+			var count int64
 
 			for {
 				done, value := valuesIter.Next()
@@ -131,7 +120,9 @@ func main() {
 
 			return nil
 		},
-	})
+	},
+		partitioning.NewLinePartitioner(),
+	)
 	if err != nil {
 		panic(fmt.Sprintf("running map reduce tasks: %s", err))
 	}

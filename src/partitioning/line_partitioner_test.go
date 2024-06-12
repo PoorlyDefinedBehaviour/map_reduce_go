@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,11 +46,12 @@ func TestPartition(t *testing.T) {
 
 		file, err := createTempFile("line_partitioner")
 		require.NoError(t, err)
+		directory := filepath.Dir(file.Name())
 
 		maxNumberOfPartitions := 10
 
 		partitioner := NewLinePartitioner()
-		partitionFilePaths, err := partitioner.Partition(file.Name(), uint32(maxNumberOfPartitions))
+		partitionFilePaths, err := partitioner.Partition(file.Name(), directory, uint32(maxNumberOfPartitions))
 		require.NoError(t, err)
 
 		assert.Empty(t, partitionFilePaths)
@@ -60,6 +62,7 @@ func TestPartition(t *testing.T) {
 
 		file, err := createTempFile("line_partitioner")
 		require.NoError(t, err)
+		directory := filepath.Dir(file.Name())
 
 		numberOfFileLines := 3
 		maxNumberOfPartitions := 5
@@ -74,7 +77,7 @@ func TestPartition(t *testing.T) {
 		require.NoError(t, err)
 
 		partitioner := NewLinePartitioner()
-		partitionFilePaths, err := partitioner.Partition(file.Name(), uint32(maxNumberOfPartitions))
+		partitionFilePaths, err := partitioner.Partition(file.Name(), directory, uint32(maxNumberOfPartitions))
 		require.NoError(t, err)
 
 		assert.Len(t, partitionFilePaths, 4)
@@ -91,6 +94,7 @@ func TestPartition(t *testing.T) {
 		rapid.Check(t, func(t *rapid.T) {
 			file, err := createTempFile("line_partitioner")
 			require.NoError(t, err)
+			directory := filepath.Dir(file.Name())
 
 			numberOfFileLines := rapid.Uint8Range(1, 255).Draw(t, "numberOfFileLines")
 			maxNumberOfPartitions := rapid.Uint8Range(1, 255).Draw(t, "maxNumberOfPartitions")
@@ -106,7 +110,7 @@ func TestPartition(t *testing.T) {
 			require.NoError(t, err)
 
 			partitioner := NewLinePartitioner()
-			partitionFilePaths, err := partitioner.Partition(file.Name(), uint32(maxNumberOfPartitions))
+			partitionFilePaths, err := partitioner.Partition(file.Name(), directory, uint32(maxNumberOfPartitions))
 			require.NoError(t, err)
 
 			for i, filePath := range partitionFilePaths {

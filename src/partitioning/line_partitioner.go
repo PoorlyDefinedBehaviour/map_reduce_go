@@ -13,11 +13,11 @@ import (
 
 type LinePartitioner struct{}
 
-func NewLinePartitioner() LinePartitioner {
-	return LinePartitioner{}
+func NewLinePartitioner() *LinePartitioner {
+	return &LinePartitioner{}
 }
 
-func (partitioner *LinePartitioner) Partition(filepath string, maxNumberOfPartitions uint32) (partitionFilePaths []string, err error) {
+func (partitioner *LinePartitioner) Partition(filepath string, outputFolder string, maxNumberOfPartitions uint32) (partitionFilePaths []string, err error) {
 	file, err := os.Open(filepath)
 	if err != nil {
 		return nil, fmt.Errorf("opening input file: filepath=%s %w", filepath, err)
@@ -40,16 +40,31 @@ func (partitioner *LinePartitioner) Partition(filepath string, maxNumberOfPartit
 		return nil, nil
 	}
 
+	if _, err = os.Stat(outputFolder); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("calling stat on the output folder: %w", err)
+		}
+
+		if err := os.MkdirAll(outputFolder, 0755); err != nil {
+			return nil, fmt.Errorf("creating folder for intermediary files: %w", err)
+		}
+		folder, err := os.Open(outputFolder)
+		if err != nil {
+			return nil, fmt.Errorf("opening output folder: %w", err)
+		}
+		if err := folder.Sync(); err != nil {
+			return nil, fmt.Errorf("syncinf output folder: %w", err)
+		}
+	}
+
 	maxLinesPerPartition := int64(math.Ceil(float64(numberOfLines) / float64(maxNumberOfPartitions)))
 
 	partitionFilePaths = make([]string, 0, maxNumberOfPartitions)
 
 	scanner := bufio.NewScanner(file)
 
-	directory, _ := path.Split(filepath)
-
 	for partitionNumber := range maxNumberOfPartitions {
-		partitionFilePath := fmt.Sprintf("%s_input_%d", directory, partitionNumber)
+		partitionFilePath := path.Join(outputFolder, fmt.Sprintf("input_%d", partitionNumber))
 
 		partitionFile, err := os.OpenFile(partitionFilePath, os.O_RDWR|os.O_CREATE, 0644)
 		if err != nil {
