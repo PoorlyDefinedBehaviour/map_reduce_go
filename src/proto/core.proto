@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+option go_package = "github.com/poorlydefinedbehaviour/map_reduce_go/proto";
+
+package core;
+
+service MapReduceNode {
+  rpc AssignMapTask(AssignMapTaskRequest) returns (AssignMapTaskRequestReply) {}
+}
+
+message AssignMapTaskRequest {
+  string filePath = 1;
+}
+
+message AssignMapTaskRequestReply {
+
+}
