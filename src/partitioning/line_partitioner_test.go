@@ -63,7 +63,6 @@ func TestPartition(t *testing.T) {
 		file, err := createTempFile("line_partitioner")
 		require.NoError(t, err)
 		directory := filepath.Dir(file.Name())
-		fmt.Printf("\n\naaaaaaa file.Name() %+v\n\n", file.Name())
 
 		numberOfFileLines := 3
 		maxNumberOfPartitions := 5

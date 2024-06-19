@@ -1,11 +1,3 @@
-const config = {
-  file: "./dev/input_word_count.txt",
-  folder: "/tmp",
-  numberOfPartitions: 3,
-  numberOfMapTasks: 3,
-  numberOfReduceTasks: 1,
-}
-
 const map = (filename, contents, emit) => {
   for (const word of contents.split(" ")) {
     const trimmedWord = word.trim()
@@ -17,11 +9,11 @@ const map = (filename, contents, emit) => {
   }
 }
 
-const reduce = (word, valuesIter, emit) => {
+const reduce = (word, nextValueIter, emit) => {
   let count = 0
 
   while (true) {
-    const { done, value } = valuesIter.next()
+    const [value, done] = nextValueIter()
     if (done) {
       break
     }

@@ -25,7 +25,6 @@ func NewClient(config ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating grpc client: %w", err)
 	}
-	defer conn.Close()
 	c := proto.NewMapReduceNodeClient(conn)
 
 	return &Client{
@@ -34,8 +33,12 @@ func NewClient(config ClientConfig) (*Client, error) {
 	}, nil
 }
 
-func AssignMapTask(ctx context.Context, filePath string) error {
-	panic("todo")
+func (client *Client) AssignMapTask(ctx context.Context, in *proto.AssignMapTaskRequest, opts ...grpc.CallOption) (*proto.AssignMapTaskRequestReply, error) {
+	reply, err := client.grpcClient.AssignMapTask(ctx, in, opts...)
+	if err != nil {
+		return reply, fmt.Errorf("sending AssignMapTask request to worker: %w", err)
+	}
+	return reply, nil
 }
 
 func (client *Client) Close() error {

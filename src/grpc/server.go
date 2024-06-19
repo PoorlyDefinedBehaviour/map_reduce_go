@@ -11,7 +11,7 @@ import (
 )
 
 type Server struct {
-	proto.UnimplementedGreeterServer
+	proto.UnimplementedMapReduceNodeServer
 	config ServerConfig
 }
 
@@ -30,7 +30,7 @@ func (s *Server) Start() error {
 		return fmt.Errorf("listening on port %d: %w", s.config.Port, err)
 	}
 	grpcServer := grpc.NewServer()
-	proto.RegisterGreeterServer(grpcServer, s)
+	proto.RegisterMapReduceNodeServer(grpcServer, s)
 	if err := grpcServer.Serve(listener); err != nil {
 		return fmt.Errorf("serving listener: %w", err)
 	}

@@ -3,7 +3,10 @@ package master
 import (
 	"context"
 	"fmt"
+	"hash/maphash"
 
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/partitioning"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/set"
 )
 
@@ -30,6 +33,7 @@ type Master struct {
 	idleWorkers *set.Set[WorkerID]
 	// Workers that are executing tasks.
 	busyWorkers *set.Set[WorkerID]
+	partitioner partitioning.Partitioner
 }
 
 type Config struct {
@@ -52,19 +56,21 @@ type task struct {
 	workerID uint64
 }
 
-func New(config Config) (*Master, error) {
+func New(config Config, partitioner partitioning.Partitioner) (*Master, error) {
 	if config.NumberOfMapWorkers == 0 {
 		return nil, fmt.Errorf("number of map taks must be greater than 0")
 	}
 	master := &Master{
+		nextTaskID:  1,
 		config:      config,
 		tasks:       make(map[uint64]task, 0),
 		idleWorkers: set.New[WorkerID](),
 		busyWorkers: set.New[WorkerID](),
+		workers:     make(map[uint64]*Worker),
+		partitioner: partitioner,
 	}
 
 	for _, worker := range config.Workers {
-		worker := worker
 		master.idleWorkers.Add(worker.ID)
 		master.workers[worker.ID] = &worker
 	}
@@ -78,15 +84,11 @@ func (master *Master) getNextTaskID() taskID {
 	return taskID
 }
 
-func (master *Master) RunTask() error {
-	panic("todo")
-}
-
 func (master *Master) Add(ctx context.Context, filePath string) error {
 	// Grab any worker.
 	workerID, found := master.idleWorkers.Find(func(_ *uint64) bool { return true })
 	if !found {
-		panic("todo")
+		return fmt.Errorf("no idle worker found")
 	}
 	master.idleWorkers.Remove(*workerID)
 
@@ -107,4 +109,68 @@ func (master *Master) Add(ctx context.Context, filePath string) error {
 	master.busyWorkers.Add(*workerID)
 
 	return nil
+}
+
+// [Input] after it has been validated.
+type ValidatedInput struct {
+	value *contracts.Input
+}
+
+func NewValidatedInput(input contracts.Input) (ValidatedInput, error) {
+	return validateInput(&input)
+}
+
+func validateInput(input *contracts.Input) (ValidatedInput, error) {
+	if input.File == "" {
+		return ValidatedInput{}, fmt.Errorf("input file path is required")
+	}
+	if input.Folder == "" {
+		return ValidatedInput{}, fmt.Errorf("folder to store intermediary files is required")
+	}
+	if input.NumberOfMapTasks == 0 {
+		return ValidatedInput{}, fmt.Errorf("number of map tasks cannot be 0")
+	}
+	if input.NumberOfReduceTasks == 0 {
+		return ValidatedInput{}, fmt.Errorf("number of reduce tasks cannot be 0")
+	}
+	if input.Map == nil {
+		return ValidatedInput{}, fmt.Errorf("map function is required")
+	}
+	if input.Reduce == nil {
+		return ValidatedInput{}, fmt.Errorf("map function is required")
+	}
+	return ValidatedInput{value: input}, nil
+}
+
+func (master *Master) Run(ctx context.Context, input ValidatedInput) error {
+	fmt.Printf("\n\naaaaaaa input.value.File %+v\n\n", input.value.File)
+	fmt.Printf("\n\naaaaaaa input.value.Folder %+v\n\n", input.value.Folder)
+	fmt.Printf("\n\naaaaaaa master %+v\n\n", master)
+	fmt.Printf("\n\naaaaaaa master.partitioner %+v\n\n", master.partitioner)
+	partitionFilePaths, err := master.partitioner.Partition(
+		input.value.File,
+		input.value.Folder,
+		input.value.NumberOfPartitions,
+	)
+	if err != nil {
+		return fmt.Errorf("partitioning input file: %w", err)
+	}
+	fmt.Printf("\n\naaaaaaa partitionFilePaths %+v\n\n", partitionFilePaths)
+
+	for _, filePath := range partitionFilePaths {
+		if err := master.Add(ctx, filePath); err != nil {
+			return fmt.Errorf("assigning partition file to worker: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// TODO: remove if this won't be used.
+// Simple hash(key) % partitions partitioning function.
+func defaultPartitionFunction(key string, numberOfReduceTasks uint32) int64 {
+	var hash maphash.Hash
+	// maphash.hash.Write never fails. See the docs.
+	_, _ = hash.Write([]byte(key))
+	return int64(hash.Sum64()) % int64(numberOfReduceTasks)
 }

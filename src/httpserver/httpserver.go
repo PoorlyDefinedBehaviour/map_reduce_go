@@ -1,22 +1,26 @@
 package httpserver
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/interpreters/javascript"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/master"
-	v8 "rogchap.com/v8go"
 )
 
 // HTTP server used to receive new task requests from clients.
-type HttpServer struct {
-	mux *http.ServeMux
+type HTTPServer struct {
+	mux    *http.ServeMux
+	master *master.Master
 }
 
-func New(master *master.Master) *HttpServer {
-	srv := &HttpServer{
-		mux: http.NewServeMux(),
+func New(master *master.Master) *HTTPServer {
+	srv := &HTTPServer{
+		mux:    http.NewServeMux(),
+		master: master,
 	}
 
 	srv.mux.HandleFunc("POST /task", srv.handleNewTask)
@@ -24,7 +28,7 @@ func New(master *master.Master) *HttpServer {
 	return srv
 }
 
-func (srv *HttpServer) Start(addr string) error {
+func (srv *HTTPServer) Start(addr string) error {
 	if err := http.ListenAndServe(addr, srv.mux); err != nil {
 		return fmt.Errorf("listening on addr: addr=%s %w", addr, err)
 	}
@@ -37,42 +41,59 @@ type NewTaskRequest struct {
 	NumberOfPartitions  uint16 `json:"numberOfPartitions"`
 	NumberOfMapTasks    uint16 `json:"numberOfMapTasks"`
 	NumberOfReduceTasks uint16 `json:"numberOfReduceTasks"`
+	ScriptBase64        string `json:"scriptBase64"`
 }
 
-func (srv *HttpServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		fmt.Printf("\n\naaaaaaa err %+v\n\n", err)
-		_, _ = w.Write([]byte(err.Error()))
-		w.WriteHeader(500)
-		return
-	}
-	fmt.Printf("\n\naaaaaaa string(body) %+v\n\n", string(body))
+func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 
-	v8Context := v8.NewContext()
-	defer v8Context.Close()
-	value, err := v8Context.RunScript(string(body), "handle_new_task.js")
-	if err != nil {
+	var newTaskRequest NewTaskRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&newTaskRequest); err != nil {
 		fmt.Printf("\n\naaaaaaa err %+v\n\n", err)
 		_, _ = w.Write([]byte(err.Error()))
-		w.WriteHeader(500)
+		w.WriteHeader(http.StatusInternalServerError)
+
 		return
 	}
 
-	value, err = v8Context.RunScript("config", "handle_new_task.js")
+	scriptString, err := base64.StdEncoding.DecodeString(newTaskRequest.ScriptBase64)
 	if err != nil {
-		fmt.Printf("\n\naaaaaaa err %+v\n\n", err)
 		_, _ = w.Write([]byte(err.Error()))
-		w.WriteHeader(500)
+		w.WriteHeader(http.StatusInternalServerError)
+
 		return
 	}
 
-	valueJsonBytes, err := value.MarshalJSON()
+	script, err := javascript.Parse(string(scriptString))
 	if err != nil {
-		fmt.Printf("\n\naaaaaaa err %+v\n\n", err)
 		_, _ = w.Write([]byte(err.Error()))
-		w.WriteHeader(500)
+		w.WriteHeader(http.StatusInternalServerError)
+
 		return
 	}
-	fmt.Printf("\n\naaaaaaa string(valueJsonBytes) %+v err %+v\n\n", string(valueJsonBytes), err)
+	defer script.Close()
+
+	validatedInput, err := master.NewValidatedInput(contracts.Input{
+		File:                newTaskRequest.File,
+		Folder:              newTaskRequest.Folder,
+		NumberOfMapTasks:    uint32(newTaskRequest.NumberOfMapTasks),
+		NumberOfReduceTasks: uint32(newTaskRequest.NumberOfReduceTasks),
+		NumberOfPartitions:  uint32(newTaskRequest.NumberOfPartitions),
+		Map:                 script.Map,
+		Reduce:              script.Reduce,
+	})
+	if err != nil {
+		_, _ = w.Write([]byte(err.Error()))
+		w.WriteHeader(http.StatusInternalServerError)
+
+		return
+	}
+
+	if err := srv.master.Run(ctx, validatedInput); err != nil {
+		_, _ = w.Write([]byte(err.Error()))
+		w.WriteHeader(http.StatusInternalServerError)
+
+		return
+	}
 }
