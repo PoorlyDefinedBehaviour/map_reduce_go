@@ -29,6 +29,7 @@ func New(master *master.Master) *HTTPServer {
 }
 
 func (srv *HTTPServer) Start(addr string) error {
+	fmt.Printf("starting http server: addr=%s\n", addr)
 	if err := http.ListenAndServe(addr, srv.mux); err != nil {
 		return fmt.Errorf("listening on addr: addr=%s %w", addr, err)
 	}
@@ -50,7 +51,6 @@ func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
 	var newTaskRequest NewTaskRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&newTaskRequest); err != nil {
-		fmt.Printf("\n\naaaaaaa err %+v\n\n", err)
 		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
 

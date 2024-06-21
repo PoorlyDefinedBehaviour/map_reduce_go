@@ -18,86 +18,172 @@ import (
 // Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
-// MapReduceNodeClient is the client API for MapReduceNode service.
+// MasterClient is the client API for Master service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type MapReduceNodeClient interface {
-	AssignMapTask(ctx context.Context, in *AssignMapTaskRequest, opts ...grpc.CallOption) (*AssignMapTaskRequestReply, error)
+type MasterClient interface {
+	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatReply, error)
 }
 
-type mapReduceNodeClient struct {
+type masterClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewMapReduceNodeClient(cc grpc.ClientConnInterface) MapReduceNodeClient {
-	return &mapReduceNodeClient{cc}
+func NewMasterClient(cc grpc.ClientConnInterface) MasterClient {
+	return &masterClient{cc}
 }
 
-func (c *mapReduceNodeClient) AssignMapTask(ctx context.Context, in *AssignMapTaskRequest, opts ...grpc.CallOption) (*AssignMapTaskRequestReply, error) {
-	out := new(AssignMapTaskRequestReply)
-	err := c.cc.Invoke(ctx, "/core.MapReduceNode/AssignMapTask", in, out, opts...)
+func (c *masterClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatReply, error) {
+	out := new(HeartbeatReply)
+	err := c.cc.Invoke(ctx, "/core.Master/Heartbeat", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// MapReduceNodeServer is the server API for MapReduceNode service.
-// All implementations must embed UnimplementedMapReduceNodeServer
+// MasterServer is the server API for Master service.
+// All implementations must embed UnimplementedMasterServer
 // for forward compatibility
-type MapReduceNodeServer interface {
+type MasterServer interface {
+	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatReply, error)
+	mustEmbedUnimplementedMasterServer()
+}
+
+// UnimplementedMasterServer must be embedded to have forward compatible implementations.
+type UnimplementedMasterServer struct {
+}
+
+func (UnimplementedMasterServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Heartbeat not implemented")
+}
+func (UnimplementedMasterServer) mustEmbedUnimplementedMasterServer() {}
+
+// UnsafeMasterServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to MasterServer will
+// result in compilation errors.
+type UnsafeMasterServer interface {
+	mustEmbedUnimplementedMasterServer()
+}
+
+func RegisterMasterServer(s grpc.ServiceRegistrar, srv MasterServer) {
+	s.RegisterService(&Master_ServiceDesc, srv)
+}
+
+func _Master_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HeartbeatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServer).Heartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/core.Master/Heartbeat",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServer).Heartbeat(ctx, req.(*HeartbeatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Master_ServiceDesc is the grpc.ServiceDesc for Master service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Master_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "core.Master",
+	HandlerType: (*MasterServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Heartbeat",
+			Handler:    _Master_Heartbeat_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "src/proto/core.proto",
+}
+
+// WorkerClient is the client API for Worker service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type WorkerClient interface {
+	AssignMapTask(ctx context.Context, in *AssignMapTaskRequest, opts ...grpc.CallOption) (*AssignMapTaskRequestReply, error)
+}
+
+type workerClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewWorkerClient(cc grpc.ClientConnInterface) WorkerClient {
+	return &workerClient{cc}
+}
+
+func (c *workerClient) AssignMapTask(ctx context.Context, in *AssignMapTaskRequest, opts ...grpc.CallOption) (*AssignMapTaskRequestReply, error) {
+	out := new(AssignMapTaskRequestReply)
+	err := c.cc.Invoke(ctx, "/core.Worker/AssignMapTask", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// WorkerServer is the server API for Worker service.
+// All implementations must embed UnimplementedWorkerServer
+// for forward compatibility
+type WorkerServer interface {
 	AssignMapTask(context.Context, *AssignMapTaskRequest) (*AssignMapTaskRequestReply, error)
-	mustEmbedUnimplementedMapReduceNodeServer()
+	mustEmbedUnimplementedWorkerServer()
 }
 
-// UnimplementedMapReduceNodeServer must be embedded to have forward compatible implementations.
-type UnimplementedMapReduceNodeServer struct {
+// UnimplementedWorkerServer must be embedded to have forward compatible implementations.
+type UnimplementedWorkerServer struct {
 }
 
-func (UnimplementedMapReduceNodeServer) AssignMapTask(context.Context, *AssignMapTaskRequest) (*AssignMapTaskRequestReply, error) {
+func (UnimplementedWorkerServer) AssignMapTask(context.Context, *AssignMapTaskRequest) (*AssignMapTaskRequestReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AssignMapTask not implemented")
 }
-func (UnimplementedMapReduceNodeServer) mustEmbedUnimplementedMapReduceNodeServer() {}
+func (UnimplementedWorkerServer) mustEmbedUnimplementedWorkerServer() {}
 
-// UnsafeMapReduceNodeServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to MapReduceNodeServer will
+// UnsafeWorkerServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to WorkerServer will
 // result in compilation errors.
-type UnsafeMapReduceNodeServer interface {
-	mustEmbedUnimplementedMapReduceNodeServer()
+type UnsafeWorkerServer interface {
+	mustEmbedUnimplementedWorkerServer()
 }
 
-func RegisterMapReduceNodeServer(s grpc.ServiceRegistrar, srv MapReduceNodeServer) {
-	s.RegisterService(&MapReduceNode_ServiceDesc, srv)
+func RegisterWorkerServer(s grpc.ServiceRegistrar, srv WorkerServer) {
+	s.RegisterService(&Worker_ServiceDesc, srv)
 }
 
-func _MapReduceNode_AssignMapTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Worker_AssignMapTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AssignMapTaskRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MapReduceNodeServer).AssignMapTask(ctx, in)
+		return srv.(WorkerServer).AssignMapTask(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/core.MapReduceNode/AssignMapTask",
+		FullMethod: "/core.Worker/AssignMapTask",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MapReduceNodeServer).AssignMapTask(ctx, req.(*AssignMapTaskRequest))
+		return srv.(WorkerServer).AssignMapTask(ctx, req.(*AssignMapTaskRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// MapReduceNode_ServiceDesc is the grpc.ServiceDesc for MapReduceNode service.
+// Worker_ServiceDesc is the grpc.ServiceDesc for Worker service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var MapReduceNode_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "core.MapReduceNode",
-	HandlerType: (*MapReduceNodeServer)(nil),
+var Worker_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "core.Worker",
+	HandlerType: (*WorkerServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "AssignMapTask",
-			Handler:    _MapReduceNode_AssignMapTask_Handler,
+			Handler:    _Worker_AssignMapTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -8,6 +8,14 @@ Implementation of a map reduce system as described in [MapReduce: Simplified Dat
 
 ## Running
 
+```
+# Run the master
+./dev/run.sh --http.port=9000 --grpc.port=8001
+
+# Run N workers
+./dev/run.sh --grpc.port=8010 --master.addr=":8001"
+```
+
 ```console
 curl -X POST localhost:8002/task \
 -H 'Content-Type: application/json' \

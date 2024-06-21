@@ -4,8 +4,21 @@ option go_package = "github.com/poorlydefinedbehaviour/map_reduce_go/proto";
 
 package core;
 
-service MapReduceNode {
+service Master {
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatReply) {}
+}
+
+message HeartbeatRequest {
+  string workerAddr = 1;  
+}
+
+message HeartbeatReply {
+
+}
+
+service Worker {
   rpc AssignMapTask(AssignMapTaskRequest) returns (AssignMapTaskRequestReply) {}
+  
 }
 
 message AssignMapTaskRequest {
@@ -15,3 +28,4 @@ message AssignMapTaskRequest {
 message AssignMapTaskRequestReply {
 
 }
+

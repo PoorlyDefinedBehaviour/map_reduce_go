@@ -35,3 +35,15 @@ func (set *Set[T]) Find(predicate func(*T) bool) (*T, bool) {
 
 	return nil, false
 }
+
+func (set *Set[T]) Len() int {
+	return len(set.items)
+}
+
+func (set *Set[T]) First() *T {
+	for item := range set.items {
+		return &item
+	}
+
+	return nil
+}
