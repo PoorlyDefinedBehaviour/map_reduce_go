@@ -152,6 +152,12 @@ func (master *Master) HeartbeatReceived(ctx context.Context, workerState contrac
 	return nil
 }
 
+func (master *Master) MapTasksCompletedReceived(ctx context.Context, tasks []contracts.CompletedTask) error {
+	fmt.Printf("\n\naaaaaaa Master.MapTasksCompletedReceived tasks %+v\n\n", tasks)
+
+	return nil
+}
+
 func (master *Master) Run(ctx context.Context, input ValidatedInput) error {
 	master.mu.Lock()
 	defer master.mu.Unlock()

@@ -29,6 +29,8 @@ type Config struct {
 	HeartbeatInterval time.Duration
 	// How long to wait for a heartbeat request to complete.
 	HeartbeatTimeout time.Duration
+	// How long to wait for a request to let the master know which map tasks have been completed to complete.
+	MapTasksCompletedTimeout time.Duration
 }
 
 func New(config Config, masterClient contracts.MasterClient, fileStorage contracts.FileStorage) (*Worker, error) {
@@ -45,7 +47,10 @@ func New(config Config, masterClient contracts.MasterClient, fileStorage contrac
 		return nil, fmt.Errorf("heartbeat interval is required")
 	}
 	if config.HeartbeatTimeout == 0 {
-		return nil, fmt.Errorf("heartbeat timeout is required")
+		return nil, fmt.Errorf("heartbeat timeout request is required")
+	}
+	if config.MapTasksCompletedTimeout == 0 {
+		return nil, fmt.Errorf("map tasks completed request timeout is required")
 	}
 	return &Worker{
 		config:       config,
@@ -121,13 +126,22 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, taskID contracts.Ta
 		return fmt.Errorf("closing storage writer: %w", err)
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-	if err := worker.masterClient.Heartbeat(timeoutCtx, worker.state, worker.config.Addr); err != nil {
-		return fmt.Errorf("sending heartbeat to master: %w", err)
+	outputFiles := writer.OutputFiles()
+	completedTask := contracts.CompletedTask{TaskID: taskID}
+	for _, outputFile := range outputFiles {
+		completedTask.OutputFiles = append(completedTask.OutputFiles, contracts.OutputFile{
+			Path:      outputFile.Path,
+			SizeBytes: outputFile.SizeBytes,
+		},
+		)
 	}
 
-	worker.masterClient.MapTasksCompleted(TODO)
+	timeoutCtx, cancel := context.WithTimeout(ctx, worker.config.MapTasksCompletedTimeout)
+	defer cancel()
+
+	if err := worker.masterClient.MapTasksCompleted(timeoutCtx, []contracts.CompletedTask{completedTask}); err != nil {
+		return fmt.Errorf("sending MapTasksCompleted message to master: %w", err)
+	}
 
 	return nil
 }

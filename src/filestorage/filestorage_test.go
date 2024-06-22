@@ -47,4 +47,8 @@ func TestNewWriter(t *testing.T) {
 	contents, err = os.ReadFile(fmt.Sprintf("%s/file_2", dir))
 	require.NoError(t, err)
 	assert.Equal(t, "33333", string(contents))
+
+	outputFiles := writer.OutputFiles()
+	panic("todo: file size may be wrong")
+	fmt.Printf("\n\naaaaaaa outputFiles %+v\n\n", outputFiles)
 }

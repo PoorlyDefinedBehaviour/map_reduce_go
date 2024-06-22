@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 )
 
 type FileStorage struct{}
@@ -23,6 +25,7 @@ type inner struct {
 	folder          string
 	fileNumber      uint32
 	maxFilSizeBytes uint64
+	outputFiles     []contracts.StorageFileInfo
 }
 
 func (f FlushOnCloseFile) Write(p []byte) (n int, err error) {
@@ -30,7 +33,7 @@ func (f FlushOnCloseFile) Write(p []byte) (n int, err error) {
 
 	if f.inner.file == nil || newFileSizeBytes > f.inner.maxFilSizeBytes {
 		if f.inner.file != nil {
-			if err := syncAndCloseFile(f.inner.file); err != nil {
+			if err := f.syncAndCloseFile(f.inner.file); err != nil {
 				return 0, err
 			}
 		}
@@ -42,6 +45,7 @@ func (f FlushOnCloseFile) Write(p []byte) (n int, err error) {
 
 		f.inner.file = file
 		f.inner.fileNumber++
+
 	}
 
 	n, err = f.inner.file.Write(p)
@@ -54,18 +58,25 @@ func (f FlushOnCloseFile) Write(p []byte) (n int, err error) {
 	return n, nil
 }
 
-func syncAndCloseFile(file *os.File) error {
+func (f FlushOnCloseFile) OutputFiles() []contracts.StorageFileInfo {
+	return f.inner.outputFiles
+}
+
+func (f *FlushOnCloseFile) syncAndCloseFile(file *os.File) error {
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("syncing file: %w", err)
 	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("closing file: %w", err)
 	}
+
+	f.inner.outputFiles = append(f.inner.outputFiles, contracts.StorageFileInfo{Path: file.Name(), SizeBytes: f.inner.fileSizeInBytes})
+
 	return nil
 }
 
 func (f FlushOnCloseFile) Close() error {
-	return syncAndCloseFile(f.inner.file)
+	return f.syncAndCloseFile(f.inner.file)
 }
 
 func (storage *FileStorage) Open(ctx context.Context, filePath string) (io.ReadCloser, error) {
@@ -76,7 +87,7 @@ func (storage *FileStorage) Open(ctx context.Context, filePath string) (io.ReadC
 	return file, nil
 }
 
-func (storage *FileStorage) NewWriter(ctx context.Context, maxFileSizeBytes uint64, folder string) (io.WriteCloser, error) {
+func (storage *FileStorage) NewWriter(ctx context.Context, maxFileSizeBytes uint64, folder string) (contracts.FileWriter, error) {
 	if err := os.MkdirAll(folder, 0750); err != nil {
 		return nil, fmt.Errorf("creating file path: path=%s %w", folder, err)
 	}

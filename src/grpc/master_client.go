@@ -44,6 +44,20 @@ func (client *MasterClient) Heartbeat(ctx context.Context, workerState contracts
 	return nil
 }
 
+func (client *MasterClient) MapTasksCompleted(ctx context.Context, tasks []contracts.CompletedTask) error {
+	protoTasks := make([]*proto.Task, 0, len(tasks))
+	for _, task := range tasks {
+		protoTask := proto.Task{TaskID: uint64(task.TaskID)}
+		for _, outputFile := range task.OutputFiles {
+			protoTask.OutputFiles = append(protoTask.OutputFiles, &proto.File{Path: outputFile.Path, SizeBytes: outputFile.SizeBytes})
+		}
+	}
+	if _, err := client.grpcClient.MapTasksCompleted(ctx, &proto.MapTasksCompletedRequest{Tasks: protoTasks}); err != nil {
+		return fmt.Errorf("handling MapTasksCompleted message: %w", err)
+	}
+	return nil
+}
+
 func (client *MasterClient) Close() error {
 	if err := client.conn.Close(); err != nil {
 		return fmt.Errorf("closing grpc client connection: %w", err)
