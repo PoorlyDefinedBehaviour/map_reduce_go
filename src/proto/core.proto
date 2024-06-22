@@ -6,23 +6,50 @@ package core;
 
 service Master {
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatReply) {}
+  rpc MapTasksCompleted(MapTasksCompletedRequest) returns (MapTasksCompletedReply) {}
+}
+
+enum WorkerState {
+  NULL = 0;
+  IDLE = 1;
+  WORKING = 2;
 }
 
 message HeartbeatRequest {
-  string workerAddr = 1;  
+  string workerAddr = 2;  
+  WorkerState state = 3;
 }
 
 message HeartbeatReply {
 
 }
 
+message File {
+  string path = 1;
+  uint64 sizeBytes = 2;
+}
+
+message Task {
+  uint64 taskID = 1;
+  repeated File outputFiles = 2;
+}
+
+message MapTasksCompletedRequest {
+  repeated Task tasks = 1;
+}
+
+message MapTasksCompletedReply {
+
+}
+
 service Worker {
   rpc AssignMapTask(AssignMapTaskRequest) returns (AssignMapTaskRequestReply) {}
-  
 }
 
 message AssignMapTaskRequest {
-  string filePath = 1;
+  uint64 taskID = 1;
+  string filePath = 2;
+  string script = 3;
 }
 
 message AssignMapTaskRequestReply {

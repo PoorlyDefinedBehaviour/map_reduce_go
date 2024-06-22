@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -33,8 +34,11 @@ func NewMasterClient(config MasterClientConfig) (*MasterClient, error) {
 	}, nil
 }
 
-func (client *MasterClient) Heartbeat(ctx context.Context, workerAddr string) error {
-	if _, err := client.grpcClient.Heartbeat(ctx, &proto.HeartbeatRequest{WorkerAddr: workerAddr}); err != nil {
+func (client *MasterClient) Heartbeat(ctx context.Context, workerState contracts.WorkerState, workerAddr string) error {
+	if _, err := client.grpcClient.Heartbeat(ctx, &proto.HeartbeatRequest{
+		State:      proto.WorkerState(workerState),
+		WorkerAddr: workerAddr,
+	}); err != nil {
 		return fmt.Errorf("sending HeartBeat request: %w", err)
 	}
 	return nil

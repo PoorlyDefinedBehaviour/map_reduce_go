@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/master"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/proto"
 
 	"google.golang.org/grpc"
@@ -13,6 +15,7 @@ import (
 type MasterServer struct {
 	proto.UnimplementedMasterServer
 	config MasterServerConfig
+	master *master.Master
 }
 
 type MasterServerConfig struct {
@@ -20,8 +23,8 @@ type MasterServerConfig struct {
 	Port uint16
 }
 
-func NewMasterServer(config MasterServerConfig) *MasterServer {
-	return &MasterServer{config: config}
+func NewMasterServer(config MasterServerConfig, master *master.Master) *MasterServer {
+	return &MasterServer{config: config, master: master}
 }
 
 func (s *MasterServer) Start() error {
@@ -39,5 +42,10 @@ func (s *MasterServer) Start() error {
 }
 
 func (s *MasterServer) Heartbeat(ctx context.Context, in *proto.HeartbeatRequest) (*proto.HeartbeatReply, error) {
-	master.HeartbeatReceive(ctx, in.WorkerAddr)
+	in.State.Number()
+	if err := s.master.HeartbeatReceived(ctx, contracts.WorkerState(in.State), in.WorkerAddr); err != nil {
+		return &proto.HeartbeatReply{}, fmt.Errorf("handling heartbeat: %w", err)
+	}
+
+	return &proto.HeartbeatReply{}, nil
 }

@@ -24,7 +24,7 @@ func newScript(input string) (*Script, error) {
 	return &Script{v8Context: v8Context, scriptValue: scriptValue}, nil
 }
 
-func (script *Script) Map(key, value string, emit func(key, value string)) error {
+func (script *Script) Map(key, value string, emit func(key, value string) error) error {
 	mapFunction, err := script.v8Context.RunScript("map", "script.js")
 	if err != nil {
 		return fmt.Errorf("fetching map function from js: %w", err)
@@ -42,7 +42,13 @@ func (script *Script) Map(key, value string, emit func(key, value string)) error
 		key := info.Args()[0].String()
 		value := info.Args()[1].String()
 
-		emit(key, value)
+		if err := emit(key, value); err != nil {
+			exceptionValue, err := v8go.NewValue(iso, err.Error())
+			if err != nil {
+				panic(err)
+			}
+			iso.ThrowException(exceptionValue)
+		}
 
 		return v8go.Undefined(iso)
 	})
@@ -68,7 +74,7 @@ func (script *Script) Map(key, value string, emit func(key, value string)) error
 	return nil
 }
 
-func (script *Script) Reduce(key string, nextValueIter func() (string, bool), emit func(key, value string)) error {
+func (script *Script) Reduce(key string, nextValueIter func() (string, bool), emit func(key, value string) error) error {
 	reduceFunction, err := script.v8Context.RunScript("reduce", "script.js")
 	if err != nil {
 		return fmt.Errorf("fetching reduce function from js: %w", err)
@@ -86,7 +92,13 @@ func (script *Script) Reduce(key string, nextValueIter func() (string, bool), em
 		key := info.Args()[0].String()
 		value := info.Args()[1].String()
 
-		emit(key, value)
+		if err := emit(key, value); err != nil {
+			exceptionValue, err := v8go.NewValue(iso, err.Error())
+			if err != nil {
+				panic(err)
+			}
+			iso.ThrowException(exceptionValue)
+		}
 
 		return v8go.Undefined(iso)
 	})

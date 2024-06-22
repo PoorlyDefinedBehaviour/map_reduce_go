@@ -27,9 +27,10 @@ function map(filename, contents, emit) {
 	filename := "file"
 	contents := "contents"
 
-	require.NoError(t, script.Map(filename, contents, func(k, v string) {
+	require.NoError(t, script.Map(filename, contents, func(k, v string) error {
 		key = k
 		value = v
+		return nil
 	}))
 
 	assert.Equal(t, filename, key)
@@ -66,9 +67,10 @@ const reduce = (word, nextValueIter, emit) => {
 
 	iterator := newIterator([]string{"1", "1", "1"})
 
-	require.NoError(t, script.Reduce("word", iterator.next, func(k, v string) {
+	require.NoError(t, script.Reduce("word", iterator.next, func(k, v string) error {
 		key = k
 		value = v
+		return nil
 	}))
 
 	assert.Equal(t, "word", key)

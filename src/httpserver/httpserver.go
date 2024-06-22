@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
-	"github.com/poorlydefinedbehaviour/map_reduce_go/src/interpreters/javascript"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/master"
 )
 
@@ -38,7 +37,6 @@ func (srv *HTTPServer) Start(addr string) error {
 
 type NewTaskRequest struct {
 	File                string `json:"file"`
-	Folder              string `json:"folder"`
 	NumberOfPartitions  uint16 `json:"numberOfPartitions"`
 	NumberOfMapTasks    uint16 `json:"numberOfMapTasks"`
 	NumberOfReduceTasks uint16 `json:"numberOfReduceTasks"`
@@ -65,23 +63,21 @@ func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script, err := javascript.Parse(string(scriptString))
-	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
-		w.WriteHeader(http.StatusInternalServerError)
+	// script, err := javascript.Parse(string(scriptString))
+	// if err != nil {
+	// 	_, _ = w.Write([]byte(err.Error()))
+	// 	w.WriteHeader(http.StatusInternalServerError)
 
-		return
-	}
-	defer script.Close()
+	// 	return
+	// }
+	// defer script.Close()
 
 	validatedInput, err := master.NewValidatedInput(contracts.Input{
 		File:                newTaskRequest.File,
-		Folder:              newTaskRequest.Folder,
+		Script:              string(scriptString),
 		NumberOfMapTasks:    uint32(newTaskRequest.NumberOfMapTasks),
 		NumberOfReduceTasks: uint32(newTaskRequest.NumberOfReduceTasks),
 		NumberOfPartitions:  uint32(newTaskRequest.NumberOfPartitions),
-		Map:                 script.Map,
-		Reduce:              script.Reduce,
 	})
 	if err != nil {
 		_, _ = w.Write([]byte(err.Error()))

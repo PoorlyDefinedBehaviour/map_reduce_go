@@ -10,10 +10,10 @@ Implementation of a map reduce system as described in [MapReduce: Simplified Dat
 
 ```
 # Run the master
-./dev/run.sh --http.port=9000 --grpc.port=8001
+./dev/run.sh --http.port=9000 --grpc.port=8001 --workspace-folder="./tmp"
 
 # Run N workers
-./dev/run.sh --grpc.port=8010 --master.addr=":8001"
+./dev/run.sh --grpc.port=8010 --master.addr=":8001" --workspace-folder="./tmp/worker_1"
 ```
 
 ```console
@@ -22,7 +22,6 @@ curl -X POST localhost:8002/task \
 --data-binary @- << EOF
 {
   "file": "./dev/input_word_count.txt",
-  "folder": "/tmp",
   "numberOfPartitions": 3,
   "numberOfMapTasks": 3,
   "numberOfReduceTasks": 1,

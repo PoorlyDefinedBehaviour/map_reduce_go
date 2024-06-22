@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/proto"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/worker"
 
@@ -41,5 +42,8 @@ func (s *WorkerServer) Start() error {
 }
 
 func (s *WorkerServer) AssignMapTask(ctx context.Context, in *proto.AssignMapTaskRequest) (*proto.AssignMapTaskRequestReply, error) {
+	if err := s.worker.OnMapTaskReceived(ctx, contracts.TaskID(in.TaskID), in.Script, in.FilePath); err != nil {
+		return &proto.AssignMapTaskRequestReply{}, fmt.Errorf("handling new task assignment: %w", err)
+	}
 	return &proto.AssignMapTaskRequestReply{}, nil
 }

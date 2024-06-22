@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/config"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/filestorage"
+
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/grpc"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/httpserver"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/master"
@@ -19,6 +21,8 @@ func main() {
 		panic(err)
 	}
 
+	ctx := context.Background()
+
 	if cfg.IsWorker() {
 		fmt.Println("starting worker")
 
@@ -27,30 +31,49 @@ func main() {
 			panic(fmt.Errorf("creating grpc MasterClient: %w", err))
 		}
 
+		fileStorage := filestorage.New()
+
 		worker, err := worker.New(worker.Config{
-			Addr:              fmt.Sprintf("%s/%d", cfg.WorkerHost, cfg.GrpcServerPort),
+			WorkspaceFolder:   cfg.WorkspaceFolder,
+			MaxFileSizeBytes:  cfg.WorkerMaxFileSizeBytes,
+			Addr:              fmt.Sprintf("%s:%d", cfg.WorkerHost, cfg.GrpcServerPort),
 			HeartbeatInterval: cfg.WorkerHeartbeatInterval,
 			HeartbeatTimeout:  cfg.WorkerHeartbeatTimeout,
-		}, masterClient)
+		}, masterClient, fileStorage)
 		if err != nil {
 			panic(fmt.Errorf("instantiating worker: %w", err))
 		}
-		go worker.HeartbeatControlLoop(context.Background())
+		go worker.HeartbeatControlLoop(ctx)
 
-		if err := grpc.NewWorkerServer(grpc.WorkerServerConfig{Port: 8001}, worker).Start(); err != nil {
+		if err := grpc.NewWorkerServer(grpc.WorkerServerConfig{Port: uint16(cfg.GrpcServerPort)}, worker).Start(); err != nil {
 			panic(fmt.Errorf("starting grpc server: %w", err))
 		}
 	} else {
 		fmt.Println("starting master")
 
+		messageBus, err := grpc.NewMessageBus(grpc.MessageBusConfig{
+			MessageBusConnectionCleanupInterval: cfg.MessageBusConnectionCleanupInterval,
+		})
+		if err != nil {
+			panic(fmt.Errorf("instantiating message bus: %w", err))
+		}
+
 		partitioner := partitioning.NewLinePartitioner()
-		master, err := master.New(master.Config{NumberOfMapWorkers: 3}, partitioner)
+		master, err := master.New(master.Config{
+			WorkspaceFolder:    cfg.WorkspaceFolder,
+			NumberOfMapWorkers: 3,
+		},
+			partitioner,
+			messageBus,
+		)
 		if err != nil {
 			panic(fmt.Errorf("instantiating master: %w", err))
 		}
 
+		go master.ControlLoop(ctx)
+
 		go func() {
-			if err := grpc.NewMasterServer(grpc.MasterServerConfig{Port: 8001}).Start(); err != nil {
+			if err := grpc.NewMasterServer(grpc.MasterServerConfig{Port: 8001}, master).Start(); err != nil {
 				panic(fmt.Errorf("starting grpc server: %w", err))
 			}
 		}()

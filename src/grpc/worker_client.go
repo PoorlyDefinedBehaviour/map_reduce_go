@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -19,7 +20,7 @@ type WorkerClientConfig struct {
 	Addr string
 }
 
-func NewClient(config WorkerClientConfig) (*WorkerClient, error) {
+func NewWorkerClient(config WorkerClientConfig) (*WorkerClient, error) {
 	// Set up a connection to the server.
 	conn, err := grpc.NewClient(config.Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -33,8 +34,8 @@ func NewClient(config WorkerClientConfig) (*WorkerClient, error) {
 	}, nil
 }
 
-func (client *WorkerClient) AssignMapTask(ctx context.Context, filePath string) error {
-	if _, err := client.grpcClient.AssignMapTask(ctx, &proto.AssignMapTaskRequest{FilePath: filePath}); err != nil {
+func (client *WorkerClient) AssignMapTask(ctx context.Context, taskID contracts.TaskID, script, filePath string) error {
+	if _, err := client.grpcClient.AssignMapTask(ctx, &proto.AssignMapTaskRequest{TaskID: uint64(taskID), Script: script, FilePath: filePath}); err != nil {
 		return fmt.Errorf("sending AssignMapTask request: %w", err)
 	}
 	return nil
