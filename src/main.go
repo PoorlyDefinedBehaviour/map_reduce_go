@@ -34,11 +34,12 @@ func main() {
 		fileStorage := filestorage.New()
 
 		worker, err := worker.New(worker.Config{
-			WorkspaceFolder:   cfg.WorkspaceFolder,
-			MaxFileSizeBytes:  cfg.WorkerMaxFileSizeBytes,
-			Addr:              fmt.Sprintf("%s:%d", cfg.WorkerHost, cfg.GrpcServerPort),
-			HeartbeatInterval: cfg.WorkerHeartbeatInterval,
-			HeartbeatTimeout:  cfg.WorkerHeartbeatTimeout,
+			WorkspaceFolder:          cfg.WorkspaceFolder,
+			MaxFileSizeBytes:         cfg.WorkerMaxFileSizeBytes,
+			Addr:                     fmt.Sprintf("%s:%d", cfg.WorkerHost, cfg.GrpcServerPort),
+			HeartbeatInterval:        cfg.WorkerHeartbeatInterval,
+			HeartbeatTimeout:         cfg.WorkerHeartbeatTimeout,
+			MapTasksCompletedTimeout: cfg.WorkerMapTasksCompletedTimeout,
 		}, masterClient, fileStorage)
 		if err != nil {
 			panic(fmt.Errorf("instantiating worker: %w", err))
@@ -58,10 +59,12 @@ func main() {
 			panic(fmt.Errorf("instantiating message bus: %w", err))
 		}
 
+		fmt.Printf("\n\naaaaaaa cfg.MaxWorkerHeartbeatInterval %+v\n\n", cfg.MaxWorkerHeartbeatInterval)
 		partitioner := partitioning.NewLinePartitioner()
 		master, err := master.New(master.Config{
-			WorkspaceFolder:    cfg.WorkspaceFolder,
-			NumberOfMapWorkers: 3,
+			WorkspaceFolder:            cfg.WorkspaceFolder,
+			NumberOfMapWorkers:         3,
+			MaxWorkerHeartbeatInterval: cfg.MaxWorkerHeartbeatInterval,
 		},
 			partitioner,
 			messageBus,

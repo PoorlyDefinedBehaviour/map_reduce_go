@@ -35,7 +35,8 @@ message Task {
 }
 
 message MapTasksCompletedRequest {
-  repeated Task tasks = 1;
+  string workerAddr = 1;
+  repeated Task tasks = 2;
 }
 
 message MapTasksCompletedReply {
@@ -48,8 +49,9 @@ service Worker {
 
 message AssignMapTaskRequest {
   uint64 taskID = 1;
-  string filePath = 2;
-  string script = 3;
+  uint64 fileID = 2;
+  string filePath = 3;
+  string script = 4;
 }
 
 message AssignMapTaskRequestReply {

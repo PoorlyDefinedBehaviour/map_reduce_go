@@ -72,13 +72,13 @@ func (bus *MessageBus) getOrCreateClient(workerAddr string) (*WorkerClient, erro
 	return client, nil
 }
 
-func (bus *MessageBus) AssignMapTask(ctx context.Context, workerAddr string, taskID contracts.TaskID, script, filePath string) error {
+func (bus *MessageBus) AssignMapTask(ctx context.Context, workerAddr string, task contracts.MapTask) error {
 	client, err := bus.getOrCreateClient(workerAddr)
 	if err != nil {
 		return fmt.Errorf("getting/creating client: workerAdr=%s %w", workerAddr, err)
 	}
 
-	if err := client.AssignMapTask(ctx, taskID, script, filePath); err != nil {
+	if err := client.AssignMapTask(ctx, task); err != nil {
 		return fmt.Errorf("sending request to assign Map task to worker: workerAddr=%s %w", workerAddr, err)
 	}
 

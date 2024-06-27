@@ -28,24 +28,29 @@ type inner struct {
 	outputFiles     []contracts.StorageFileInfo
 }
 
-func (f FlushOnCloseFile) Write(p []byte) (n int, err error) {
-	newFileSizeBytes := f.inner.fileSizeInBytes + uint64(len(p))
+func (f *FlushOnCloseFile) createFile(path string) error {
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("opening/creating file: %w", err)
+	}
+	f.inner.file = file
+	f.inner.fileSizeInBytes = 0
+	f.inner.fileNumber++
+	return nil
+}
 
-	if f.inner.file == nil || newFileSizeBytes > f.inner.maxFilSizeBytes {
+func (f FlushOnCloseFile) Write(p []byte) (n int, err error) {
+
+	if f.inner.file == nil || f.inner.fileSizeInBytes+uint64(len(p)) > f.inner.maxFilSizeBytes {
 		if f.inner.file != nil {
 			if err := f.syncAndCloseFile(f.inner.file); err != nil {
 				return 0, err
 			}
 		}
 		filePath := fmt.Sprintf("%s/file_%d", f.inner.folder, f.inner.fileNumber)
-		file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-		if err != nil {
-			return 0, fmt.Errorf("opening file: %w", err)
+		if err := f.createFile(filePath); err != nil {
+			return 0, fmt.Errorf("creating new partition file: %w", err)
 		}
-
-		f.inner.file = file
-		f.inner.fileNumber++
-
 	}
 
 	n, err = f.inner.file.Write(p)
@@ -53,7 +58,7 @@ func (f FlushOnCloseFile) Write(p []byte) (n int, err error) {
 		return n, fmt.Errorf("writing to file: %w", err)
 	}
 
-	f.inner.fileSizeInBytes += newFileSizeBytes
+	f.inner.fileSizeInBytes += uint64(len(p))
 
 	return n, nil
 }

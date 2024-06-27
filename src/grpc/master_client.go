@@ -44,15 +44,17 @@ func (client *MasterClient) Heartbeat(ctx context.Context, workerState contracts
 	return nil
 }
 
-func (client *MasterClient) MapTasksCompleted(ctx context.Context, tasks []contracts.CompletedTask) error {
+func (client *MasterClient) MapTasksCompleted(ctx context.Context, workerAddr string, tasks []contracts.CompletedTask) error {
 	protoTasks := make([]*proto.Task, 0, len(tasks))
 	for _, task := range tasks {
-		protoTask := proto.Task{TaskID: uint64(task.TaskID)}
+		protoTask := &proto.Task{TaskID: uint64(task.TaskID)}
 		for _, outputFile := range task.OutputFiles {
-			protoTask.OutputFiles = append(protoTask.OutputFiles, &proto.File{Path: outputFile.Path, SizeBytes: outputFile.SizeBytes})
+			protoTask.OutputFiles = append(protoTask.OutputFiles, &proto.File{Path: outputFile.FilePath, SizeBytes: outputFile.SizeBytes})
 		}
+		protoTasks = append(protoTasks, protoTask)
 	}
-	if _, err := client.grpcClient.MapTasksCompleted(ctx, &proto.MapTasksCompletedRequest{Tasks: protoTasks}); err != nil {
+
+	if _, err := client.grpcClient.MapTasksCompleted(ctx, &proto.MapTasksCompletedRequest{WorkerAddr: workerAddr, Tasks: protoTasks}); err != nil {
 		return fmt.Errorf("handling MapTasksCompleted message: %w", err)
 	}
 	return nil

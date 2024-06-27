@@ -8,7 +8,8 @@ type CompletedTask struct {
 }
 
 type OutputFile struct {
-	Path      string
+	FileID    FileID
+	FilePath  string
 	SizeBytes uint64
 }
 
@@ -16,7 +17,7 @@ type MasterClient interface {
 	// Can be used by a worker to send a heartbeat to the master.
 	Heartbeat(ctx context.Context, workerState WorkerState, workerAddr string) error
 	// Can be used by a worker to let the master know that a set of tasks have been completed.
-	MapTasksCompleted(ctx context.Context, tasks []CompletedTask) error
+	MapTasksCompleted(ctx context.Context, workerAddr string, tasks []CompletedTask) error
 }
 
 type WorkerClient interface {

@@ -1,5 +1,5 @@
 const map = (filename, contents, emit) => {
-  for (const word of contents.split(" ")) {
+  for (const word of contents.split(/\s+/)) {
     const trimmedWord = word.trim()
     if (!trimmedWord) {
       continue

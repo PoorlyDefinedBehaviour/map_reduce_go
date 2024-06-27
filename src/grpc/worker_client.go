@@ -34,8 +34,13 @@ func NewWorkerClient(config WorkerClientConfig) (*WorkerClient, error) {
 	}, nil
 }
 
-func (client *WorkerClient) AssignMapTask(ctx context.Context, taskID contracts.TaskID, script, filePath string) error {
-	if _, err := client.grpcClient.AssignMapTask(ctx, &proto.AssignMapTaskRequest{TaskID: uint64(taskID), Script: script, FilePath: filePath}); err != nil {
+func (client *WorkerClient) AssignMapTask(ctx context.Context, task contracts.MapTask) error {
+	if _, err := client.grpcClient.AssignMapTask(ctx, &proto.AssignMapTaskRequest{
+		TaskID:   uint64(task.ID),
+		Script:   task.Script,
+		FileID:   uint64(task.FileID),
+		FilePath: task.FilePath,
+	}); err != nil {
 		return fmt.Errorf("sending AssignMapTask request: %w", err)
 	}
 	return nil

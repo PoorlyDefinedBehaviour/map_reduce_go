@@ -15,6 +15,7 @@ import (
 type WorkerAddr = string
 type taskState uint8
 type taskType = uint8
+type workerState = uint8
 
 const (
 	// The task is ready to be picked up.
@@ -26,6 +27,9 @@ const (
 
 	taskTypeMap    taskType = 1 << 0
 	taskTypeReduce taskType = 1 << 1
+
+	workerStateIdle workerState = 1 << 0
+	workerStateBusy workerState = 1 << 1
 )
 
 type Master struct {
@@ -34,15 +38,14 @@ type Master struct {
 	config     Config
 	// To keep track of the state of each task.
 	tasks map[contracts.TaskID]*task
-	// Workers that are ready to execute tasks.
-	idleWorkers map[WorkerAddr]worker
-	// Workers that are executing tasks.
-	busyWorkers map[WorkerAddr]worker
+	// The workers available.
+	workers     map[WorkerAddr]*worker
 	partitioner partitioning.Partitioner
 	bus         contracts.MessageBus
 }
 
 type worker struct {
+	state           workerState
 	lastHeartbeatAt time.Time
 	addr            WorkerAddr
 }
@@ -52,6 +55,8 @@ type Config struct {
 	NumberOfMapWorkers uint32
 	// Folder used to write partitioned input files.
 	WorkspaceFolder string
+	// The amount of time a worker can go without sending a heartbeat before being removed from the worker list.
+	MaxWorkerHeartbeatInterval time.Duration
 }
 
 type pendingTask struct {
@@ -59,23 +64,39 @@ type pendingTask struct {
 }
 
 type task struct {
-	state    taskState
-	taskType taskType
-	script   string
 	id       contracts.TaskID
+	taskType taskType
+	// The script that the worker should execute.
+	script string
 
-	// Path to the file that contains the input data.
+	files       map[contracts.FileID]pendingFile
+	outputFiles map[contracts.FileID]contracts.OutputFile
+}
+
+type pendingFile struct {
+	fileID   contracts.FileID
 	filePath string
-	// The address of the worker that's executing the task.
-	WorkerAddr WorkerAddr
+	// The address of the worker that's processing the file.
+	// May be empty if there's not worker assigned yet.
+	workerAddr WorkerAddr
+}
+
+type Assignment struct {
+	// The worker that should receive the task.
+	WorkerAddr string
+	// The task that should be given to the worker.
+	Task contracts.MapTask
 }
 
 func New(config Config, partitioner partitioning.Partitioner, bus contracts.MessageBus) (*Master, error) {
 	if config.NumberOfMapWorkers == 0 {
-		return nil, fmt.Errorf("number of map taks must be greater than 0")
+		return nil, fmt.Errorf("number of map workers must be greater than 0")
 	}
 	if config.WorkspaceFolder == "" {
 		return nil, fmt.Errorf("workspace folder is required")
+	}
+	if config.MaxWorkerHeartbeatInterval == 0 {
+		return nil, fmt.Errorf("MaxWorkerHeartbeatInterval is required")
 	}
 	master := &Master{
 		mu:          &sync.Mutex{},
@@ -97,8 +118,23 @@ func (master *Master) ControlLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			fmt.Println("todo: clean up workers that haven't sent heartbeats")
+			master.tryToRemoveDeadWorkers()
 			time.Sleep(10 * time.Second)
+		}
+	}
+}
+
+func (master *Master) tryToRemoveDeadWorkers() {
+	master.mu.Lock()
+	removeDeadWorkers(master.config.MaxWorkerHeartbeatInterval, master.idleWorkers)
+	removeDeadWorkers(master.config.MaxWorkerHeartbeatInterval, master.busyWorkers)
+	master.mu.Unlock()
+}
+
+func removeDeadWorkers(maxDurationWithoutHeartbeat time.Duration, workers map[WorkerAddr]worker) {
+	for _, worker := range workers {
+		if time.Since(worker.lastHeartbeatAt) >= maxDurationWithoutHeartbeat {
+			delete(workers, worker.addr)
 		}
 	}
 }
@@ -152,8 +188,28 @@ func (master *Master) HeartbeatReceived(ctx context.Context, workerState contrac
 	return nil
 }
 
-func (master *Master) MapTasksCompletedReceived(ctx context.Context, tasks []contracts.CompletedTask) error {
+func (master *Master) MapTasksCompletedReceived(ctx context.Context, workerAddr WorkerAddr, tasks []contracts.CompletedTask) error {
+	master.mu.Lock()
+	defer master.mu.Unlock()
+
+	for _, completedTask := range tasks {
+		task, ok := master.tasks[completedTask.TaskID]
+		if !ok {
+			continue
+		}
+
+		for _, outputFile := range completedTask.OutputFiles {
+			delete(task.files, outputFile.FileID)
+			task.outputFiles[outputFile.FileID] = outputFile
+		}
+
+		master.markWorkerAsIdle(workerAddr)
+	}
+
 	fmt.Printf("\n\naaaaaaa Master.MapTasksCompletedReceived tasks %+v\n\n", tasks)
+	fmt.Printf("\n\naaaaaaa master.tasks %+v\n\n", master.tasks)
+
+	master.tryAssignTasks(context.Background())
 
 	return nil
 }
@@ -171,11 +227,21 @@ func (master *Master) Run(ctx context.Context, input ValidatedInput) error {
 		return fmt.Errorf("partitioning input file: %w", err)
 	}
 
-	// Create tasks that will be assigned to workers later.
-	for _, filePath := range partitionFilePaths {
-		task := &task{state: taskStateIdle, id: master.getNextTaskID(), script: input.value.Script, filePath: filePath, WorkerAddr: ""}
-		master.tasks[task.id] = task
+	files := make(map[contracts.FileID]pendingFile, len(partitionFilePaths))
+	for i, filePath := range partitionFilePaths {
+		fileID := contracts.FileID(i)
+		files[fileID] = pendingFile{fileID: fileID, filePath: filePath}
 	}
+
+	// Create tasks that will be assigned to workers later.
+	task := &task{
+		id:          master.getNextTaskID(),
+		taskType:    taskTypeMap,
+		script:      input.value.Script,
+		files:       files,
+		outputFiles: make(map[contracts.FileID]contracts.OutputFile),
+	}
+	master.tasks[task.id] = task
 
 	master.tryAssignTasks(ctx)
 
@@ -183,32 +249,51 @@ func (master *Master) Run(ctx context.Context, input ValidatedInput) error {
 }
 
 // Assigns pending tasks to idle workers.
-func (master *Master) tryAssignTasks(ctx context.Context) {
+func (master *Master) tryAssignTasks(ctx context.Context) []Assignment {
+	assignments := make([]Assignment, 0)
+
 	for _, task := range master.tasks {
-		if task.state != taskStateIdle {
-			continue
-		}
-		fmt.Printf("\n\naaaaaaa master.idleWorkers %+v\n\n", master.idleWorkers)
+		// Try to find a file that's not assigned to a worker.
+		for _, pendingFile := range task.files {
+			if pendingFile.workerAddr != "" {
+				continue
+			}
 
-		var anyIdleWorker *worker
-		for _, worker := range master.idleWorkers {
-			anyIdleWorker = &worker
-			break
-		}
-		if anyIdleWorker == nil {
-			return
-		}
+			worker := master.findIdleWorker()
+			if worker == nil {
+				return assignments
+			}
 
-		fmt.Printf("\n\naaaaaaa assigning file %s to worker %s\n\n", task.filePath, anyIdleWorker.addr)
-		if err := master.bus.AssignMapTask(ctx, anyIdleWorker.addr, task.id, task.script, task.filePath); err != nil {
-			fmt.Printf("assigning task to worker: %s\n", err)
-			continue
-		}
+			mapTask := contracts.MapTask{
+				ID:       task.id,
+				Script:   task.script,
+				FileID:   pendingFile.fileID,
+				FilePath: pendingFile.filePath,
+			}
+			fmt.Printf("\n\naaaaaaa assigning map task to worker: worker=%s  taskID=%+v taskFileID=%+v taskFilePath=%+v\n\n", anyIdleWorker.addr, mapTask.ID, mapTask.FileID, mapTask.FilePath)
+			if err := master.bus.AssignMapTask(ctx, worker.addr, mapTask); err != nil {
+				fmt.Printf("assigning task to worker: %s\n", err)
+				continue
+			}
 
-		delete(master.idleWorkers, anyIdleWorker.addr)
-		master.busyWorkers[anyIdleWorker.addr] = *anyIdleWorker
-		task.state = taskStateInProgress
+			pendingFile := task.files[pendingFile.fileID]
+			pendingFile.workerAddr = worker.addr
+			worker.state = workerStateBusy
+			task.files[pendingFile.fileID] = pendingFile
+		}
 	}
+
+	return assignments
+}
+
+func (master *Master) findIdleWorker() *worker {
+	for _, worker := range master.workers {
+		if worker.state == workerStateIdle {
+			return worker
+		}
+	}
+
+	return nil
 }
 
 // TODO: remove if this won't be used.

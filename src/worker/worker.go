@@ -77,7 +77,6 @@ func (worker *Worker) HeartbeatControlLoop(ctx context.Context) {
 }
 
 func (worker *Worker) OnMapTaskReceived(ctx context.Context, taskID contracts.TaskID, script string, filePath string) error {
-	fmt.Printf("\n\naaaaaaa OnMapTaskReceived filePath %+v\n\n", filePath)
 
 	jsScript, err := javascript.Parse(script)
 	if err != nil {
@@ -95,7 +94,6 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, taskID contracts.Ta
 	if err != nil {
 		return fmt.Errorf("reading file contents: %w", err)
 	}
-	fmt.Printf("\n\naaaaaaa file contents: string(contents)\n%+v\n\n", string(contents))
 
 	outputFolder := fmt.Sprintf("%s/%d", worker.config.WorkspaceFolder, taskID)
 
@@ -127,19 +125,21 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, taskID contracts.Ta
 	}
 
 	outputFiles := writer.OutputFiles()
+
+	fmt.Printf("\n\naaaaaaa outputFiles %+v\n\n", outputFiles)
 	completedTask := contracts.CompletedTask{TaskID: taskID}
 	for _, outputFile := range outputFiles {
 		completedTask.OutputFiles = append(completedTask.OutputFiles, contracts.OutputFile{
-			Path:      outputFile.Path,
+			FilePath:  outputFile.Path,
 			SizeBytes: outputFile.SizeBytes,
 		},
 		)
 	}
+	fmt.Printf("\n\naaaaaaa completedTask %+v\n\n", completedTask)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, worker.config.MapTasksCompletedTimeout)
 	defer cancel()
-
-	if err := worker.masterClient.MapTasksCompleted(timeoutCtx, []contracts.CompletedTask{completedTask}); err != nil {
+	if err := worker.masterClient.MapTasksCompleted(timeoutCtx, worker.config.Addr, []contracts.CompletedTask{completedTask}); err != nil {
 		return fmt.Errorf("sending MapTasksCompleted message to master: %w", err)
 	}
 

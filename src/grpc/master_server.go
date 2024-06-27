@@ -56,11 +56,13 @@ func (s *MasterServer) MapTasksCompleted(ctx context.Context, in *proto.MapTasks
 		task := contracts.CompletedTask{TaskID: contracts.TaskID(t.TaskID)}
 
 		for _, file := range t.OutputFiles {
-			task.OutputFiles = append(task.OutputFiles, contracts.OutputFile{Path: file.Path, SizeBytes: file.SizeBytes})
+			task.OutputFiles = append(task.OutputFiles, contracts.OutputFile{FilePath: file.Path, SizeBytes: file.SizeBytes})
 		}
+
+		tasks = append(tasks, task)
 	}
 
-	if err := s.master.MapTasksCompletedReceived(ctx, tasks); err != nil {
+	if err := s.master.MapTasksCompletedReceived(ctx, in.WorkerAddr, tasks); err != nil {
 		return &proto.MapTasksCompletedReply{}, fmt.Errorf("handling MapTasksCompletedRequest: %w", err)
 	}
 
