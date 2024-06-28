@@ -36,7 +36,7 @@ func NewMasterClient(config MasterClientConfig) (*MasterClient, error) {
 
 func (client *MasterClient) Heartbeat(ctx context.Context, workerState contracts.WorkerState, workerAddr string) error {
 	if _, err := client.grpcClient.Heartbeat(ctx, &proto.HeartbeatRequest{
-		State:      proto.WorkerState(workerState),
+		State:      proto.WorkerState(workerState.Value),
 		WorkerAddr: workerAddr,
 	}); err != nil {
 		return fmt.Errorf("sending HeartBeat request: %w", err)

@@ -42,7 +42,11 @@ func (s *MasterServer) Start() error {
 }
 
 func (s *MasterServer) Heartbeat(ctx context.Context, in *proto.HeartbeatRequest) (*proto.HeartbeatReply, error) {
-	if err := s.master.HeartbeatReceived(ctx, contracts.WorkerState(in.State), in.WorkerAddr); err != nil {
+	workerState, err := contracts.NewWorkerState(int8(in.State))
+	if err != nil {
+		return &proto.HeartbeatReply{}, fmt.Errorf("parsing worker state: state=%+v %w", in.State, err)
+	}
+	if err := s.master.HeartbeatReceived(ctx, workerState, in.WorkerAddr); err != nil {
 		return &proto.HeartbeatReply{}, fmt.Errorf("handling heartbeat: %w", err)
 	}
 
@@ -62,7 +66,7 @@ func (s *MasterServer) MapTasksCompleted(ctx context.Context, in *proto.MapTasks
 		tasks = append(tasks, task)
 	}
 
-	if err := s.master.MapTasksCompletedReceived(ctx, in.WorkerAddr, tasks); err != nil {
+	if err := s.master.OnMapTasksCompletedReceived(ctx, in.WorkerAddr, tasks); err != nil {
 		return &proto.MapTasksCompletedReply{}, fmt.Errorf("handling MapTasksCompletedRequest: %w", err)
 	}
 

@@ -86,7 +86,7 @@ func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := srv.master.Run(ctx, validatedInput); err != nil {
+	if err := srv.master.OnNewTask(ctx, validatedInput); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
 

@@ -6,7 +6,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/poorlydefinedbehaviour/map_reduce_go/src/constants"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/interpreters/javascript"
 )
@@ -56,7 +55,7 @@ func New(config Config, masterClient contracts.MasterClient, fileStorage contrac
 		config:       config,
 		masterClient: masterClient,
 		fileStorage:  fileStorage,
-		state:        constants.WorkerStateIdle,
+		state:        contracts.WorkerStateIdle,
 	}, nil
 }
 
@@ -76,17 +75,16 @@ func (worker *Worker) HeartbeatControlLoop(ctx context.Context) {
 	}
 }
 
-func (worker *Worker) OnMapTaskReceived(ctx context.Context, taskID contracts.TaskID, script string, filePath string) error {
-
-	jsScript, err := javascript.Parse(script)
+func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapTask) error {
+	jsScript, err := javascript.Parse(task.Script)
 	if err != nil {
-		return fmt.Errorf("parsing script: script='%s' %w", script, err)
+		return fmt.Errorf("parsing script: script='%s' %w", task.Script, err)
 	}
 	defer jsScript.Close()
 
-	reader, err := worker.fileStorage.Open(ctx, filePath)
+	reader, err := worker.fileStorage.Open(ctx, task.FilePath)
 	if err != nil {
-		return fmt.Errorf("opening file: path=%s %w", filePath, err)
+		return fmt.Errorf("opening file: path=%s %w", task.FilePath, err)
 	}
 	defer reader.Close()
 
@@ -95,7 +93,7 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, taskID contracts.Ta
 		return fmt.Errorf("reading file contents: %w", err)
 	}
 
-	outputFolder := fmt.Sprintf("%s/%d", worker.config.WorkspaceFolder, taskID)
+	outputFolder := fmt.Sprintf("%s/%d", worker.config.WorkspaceFolder, task.ID)
 
 	writer, err := worker.fileStorage.NewWriter(ctx, worker.config.MaxFileSizeBytes, outputFolder)
 	if err != nil {
@@ -103,7 +101,7 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, taskID contracts.Ta
 	}
 	defer writer.Close()
 
-	if err := jsScript.Map(filePath, string(contents), func(key, value string) error {
+	if err := jsScript.Map(task.FilePath, string(contents), func(key, value string) error {
 		fmt.Printf("\n\naaaaaaa Worker.OnMapTaskReceived emit called with: key %+v value %+v\n\n", key, value)
 		if _, err := writer.Write([]byte(key)); err != nil {
 			return fmt.Errorf("emit: writing key to writer: %w", err)
@@ -126,16 +124,15 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, taskID contracts.Ta
 
 	outputFiles := writer.OutputFiles()
 
-	fmt.Printf("\n\naaaaaaa outputFiles %+v\n\n", outputFiles)
-	completedTask := contracts.CompletedTask{TaskID: taskID}
+	completedTask := contracts.CompletedTask{TaskID: task.ID}
 	for _, outputFile := range outputFiles {
 		completedTask.OutputFiles = append(completedTask.OutputFiles, contracts.OutputFile{
+			FileID:    task.FileID,
 			FilePath:  outputFile.Path,
 			SizeBytes: outputFile.SizeBytes,
 		},
 		)
 	}
-	fmt.Printf("\n\naaaaaaa completedTask %+v\n\n", completedTask)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, worker.config.MapTasksCompletedTimeout)
 	defer cancel()

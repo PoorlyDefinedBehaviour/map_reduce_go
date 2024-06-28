@@ -42,7 +42,12 @@ func (s *WorkerServer) Start() error {
 }
 
 func (s *WorkerServer) AssignMapTask(ctx context.Context, in *proto.AssignMapTaskRequest) (*proto.AssignMapTaskRequestReply, error) {
-	if err := s.worker.OnMapTaskReceived(ctx, contracts.TaskID(in.TaskID), in.Script, in.FilePath); err != nil {
+	if err := s.worker.OnMapTaskReceived(ctx, contracts.MapTask{
+		ID:       contracts.TaskID(in.TaskID),
+		Script:   in.Script,
+		FileID:   contracts.FileID(in.FileID),
+		FilePath: in.FilePath,
+	}); err != nil {
 		return &proto.AssignMapTaskRequestReply{}, fmt.Errorf("handling new task assignment: %w", err)
 	}
 	return &proto.AssignMapTaskRequestReply{}, nil
