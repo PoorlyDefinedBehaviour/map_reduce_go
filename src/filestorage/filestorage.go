@@ -40,7 +40,6 @@ func (f *FlushOnCloseFile) createFile(path string) error {
 }
 
 func (f FlushOnCloseFile) Write(p []byte) (n int, err error) {
-
 	if f.inner.file == nil || f.inner.fileSizeInBytes+uint64(len(p)) > f.inner.maxFilSizeBytes {
 		if f.inner.file != nil {
 			if err := f.syncAndCloseFile(f.inner.file); err != nil {

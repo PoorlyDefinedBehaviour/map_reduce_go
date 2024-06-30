@@ -16,8 +16,9 @@ enum WorkerState {
 }
 
 message HeartbeatRequest {
-  string workerAddr = 2;  
-  WorkerState state = 3;
+  string workerAddr = 1;  
+  WorkerState state = 2;
+  uint64 memoryAvailable = 3;
 }
 
 message HeartbeatReply {

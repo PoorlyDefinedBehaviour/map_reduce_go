@@ -25,6 +25,9 @@ curl -X POST localhost:8002/task \
   "numberOfPartitions": 3,
   "numberOfMapTasks": 3,
   "numberOfReduceTasks": 1,
+  "requests": {
+     "memory" "64Mi"
+  },
   "scriptBase64": "$(cat word_count.js | base64 -w 0)"
 }
 EOF

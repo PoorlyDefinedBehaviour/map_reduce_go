@@ -36,11 +36,16 @@ func (srv *HTTPServer) Start(addr string) error {
 }
 
 type NewTaskRequest struct {
-	File                string `json:"file"`
-	NumberOfPartitions  uint16 `json:"numberOfPartitions"`
-	NumberOfMapTasks    uint16 `json:"numberOfMapTasks"`
-	NumberOfReduceTasks uint16 `json:"numberOfReduceTasks"`
-	ScriptBase64        string `json:"scriptBase64"`
+	File                string   `json:"file"`
+	NumberOfPartitions  uint16   `json:"numberOfPartitions"`
+	NumberOfMapTasks    uint16   `json:"numberOfMapTasks"`
+	NumberOfReduceTasks uint16   `json:"numberOfReduceTasks"`
+	Requests            Requests `json:"requests"`
+	ScriptBase64        string   `json:"scriptBase64"`
+}
+
+type Requests struct {
+	Memory string `json:"memory"`
 }
 
 func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
@@ -63,21 +68,13 @@ func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// script, err := javascript.Parse(string(scriptString))
-	// if err != nil {
-	// 	_, _ = w.Write([]byte(err.Error()))
-	// 	w.WriteHeader(http.StatusInternalServerError)
-
-	// 	return
-	// }
-	// defer script.Close()
-
 	validatedInput, err := master.NewValidatedInput(contracts.Input{
 		File:                newTaskRequest.File,
 		Script:              string(scriptString),
 		NumberOfMapTasks:    uint32(newTaskRequest.NumberOfMapTasks),
 		NumberOfReduceTasks: uint32(newTaskRequest.NumberOfReduceTasks),
 		NumberOfPartitions:  uint32(newTaskRequest.NumberOfPartitions),
+		RequestsMemory:      newTaskRequest.Requests.Memory,
 	})
 	if err != nil {
 		_, _ = w.Write([]byte(err.Error()))

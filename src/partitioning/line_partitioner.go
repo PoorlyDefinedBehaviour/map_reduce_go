@@ -66,19 +66,15 @@ func (partitioner *LinePartitioner) Partition(filepath string, outputFolder stri
 	for partitionNumber := range maxNumberOfPartitions {
 		partitionFilePath := path.Join(outputFolder, fmt.Sprintf("input_%d", partitionNumber))
 
-		partitionFile, err := os.OpenFile(partitionFilePath, os.O_RDWR|os.O_CREATE, 0644)
-		if err != nil {
-			return nil, fmt.Errorf("creating/opening partition file: path=%s %w", partitionFilePath, err)
-		}
-		defer func() {
-			if closeErr := partitionFile.Close(); closeErr != nil {
-				err = errors.Join(err, fmt.Errorf("closing partition file: path=%s %w", partitionFilePath, closeErr))
-			}
-		}()
+		var partitionFile *os.File
 
 		for range maxLinesPerPartition {
 			// Reached the end of the file.
 			if !scanner.Scan() {
+				if partitionFile == nil {
+					return partitionFilePaths, nil
+				}
+
 				if err := partitionFile.Sync(); err != nil {
 					return nil, fmt.Errorf("syncing partition file: path=%s %w", partitionFilePath, err)
 				}
@@ -87,6 +83,16 @@ func (partitioner *LinePartitioner) Partition(filepath string, outputFolder stri
 
 				return partitionFilePaths, nil
 			}
+
+			partitionFile, err = os.OpenFile(partitionFilePath, os.O_RDWR|os.O_CREATE, 0644)
+			if err != nil {
+				return nil, fmt.Errorf("creating/opening partition file: path=%s %w", partitionFilePath, err)
+			}
+			defer func() {
+				if closeErr := partitionFile.Close(); closeErr != nil {
+					err = errors.Join(err, fmt.Errorf("closing partition file: path=%s %w", partitionFilePath, closeErr))
+				}
+			}()
 
 			if _, err := partitionFile.Write(scanner.Bytes()); err != nil {
 				return nil, fmt.Errorf("writing to partition file: %w", err)
@@ -115,11 +121,20 @@ func countLinesInFile(reader io.Reader) (int, error) {
 
 	lineSeparator := []byte{'\n'}
 
+	isFileEmpty := true
+
 	for {
 		bytesRead, err := reader.Read(buffer)
+
 		count += bytes.Count(buffer[:bytesRead], lineSeparator)
 
+		isFileEmpty = isFileEmpty && bytesRead == 0
+
 		if errors.Is(err, io.EOF) {
+			// If the file has a single line without \n at the end.
+			if !isFileEmpty && count == 0 {
+				return 1, nil
+			}
 			return count, nil
 		}
 

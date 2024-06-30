@@ -29,7 +29,11 @@ func createTempFile(fileName string) (*os.File, error) {
 
 func mustReadFile(filePath string) string {
 	file, err := os.Open(filePath)
+	if err != nil {
+		panic(err)
+	}
 	defer file.Close()
+
 	contents, err := io.ReadAll(file)
 	if err != nil {
 		panic(err)
@@ -51,10 +55,52 @@ func TestPartition(t *testing.T) {
 		maxNumberOfPartitions := 10
 
 		partitioner := NewLinePartitioner()
+
+		partitionFilePaths, err := partitioner.Partition(file.Name(), directory, uint32(maxNumberOfPartitions))
+		require.NoError(t, err)
+		assert.Empty(t, partitionFilePaths)
+	})
+
+	t.Run("file has 1 line without new line at the end", func(t *testing.T) {
+		t.Parallel()
+
+		file, err := createTempFile("line_partitioner")
+		require.NoError(t, err)
+
+		_, err = file.WriteString("a b c")
+		require.NoError(t, err)
+
+		directory := filepath.Dir(file.Name())
+
+		maxNumberOfPartitions := 10
+
+		partitioner := NewLinePartitioner()
 		partitionFilePaths, err := partitioner.Partition(file.Name(), directory, uint32(maxNumberOfPartitions))
 		require.NoError(t, err)
 
-		assert.Empty(t, partitionFilePaths)
+		assert.Equal(t, 1, len(partitionFilePaths))
+		assert.Equal(t, "a b c\n", mustReadFile(partitionFilePaths[0]))
+	})
+
+	t.Run("file has 1 line with new line at the end", func(t *testing.T) {
+		t.Parallel()
+
+		file, err := createTempFile("line_partitioner")
+		require.NoError(t, err)
+
+		_, err = file.WriteString("a b c\n")
+		require.NoError(t, err)
+
+		directory := filepath.Dir(file.Name())
+
+		maxNumberOfPartitions := 10
+
+		partitioner := NewLinePartitioner()
+		partitionFilePaths, err := partitioner.Partition(file.Name(), directory, uint32(maxNumberOfPartitions))
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, len(partitionFilePaths))
+		assert.Equal(t, "a b c\n", mustReadFile(partitionFilePaths[0]))
 	})
 
 	t.Run("the number of partitions is greater than the number of lines in the file", func(t *testing.T) {
