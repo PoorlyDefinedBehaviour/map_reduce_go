@@ -86,7 +86,7 @@ func Test_OnMessage_NewTaskMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	// Theres a new task but no workers available.
-	_, err = m.OnMessage(ctx, &NewTaskMessage{input: input})
+	_, err = m.OnMessage(ctx, &NewTaskMessage{Input: input})
 	assert.ErrorIs(t, err, ErrNoWorkerAvailable)
 
 	// Master receives a heartbeat and registers the worker.
@@ -96,7 +96,7 @@ func Test_OnMessage_NewTaskMessage(t *testing.T) {
 	assert.Empty(t, out)
 
 	// There's a worker available so the task should be assigned to it.
-	out, err = m.OnMessage(ctx, &NewTaskMessage{input: input})
+	out, err = m.OnMessage(ctx, &NewTaskMessage{Input: input})
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, len(out))
@@ -106,7 +106,7 @@ func Test_OnMessage_NewTaskMessage(t *testing.T) {
 
 	// If a new task comes in, it can't be assigned to the worker
 	// because the worker is busy.
-	out, err = m.OnMessage(ctx, &NewTaskMessage{input: input})
+	out, err = m.OnMessage(ctx, &NewTaskMessage{Input: input})
 	assert.ErrorIs(t, err, ErrNoWorkerAvailable)
 	assert.Empty(t, out)
 
@@ -200,7 +200,7 @@ func TestTryAssignTasks(t *testing.T) {
 		NumberOfPartitions:  3,
 	})
 	require.NoError(t, err)
-	out, err = m.OnNewTask(ctx, input)
+	out, err = m.onNewTask(input)
 	require.NoError(t, err)
 	assert.Empty(t, out)
 

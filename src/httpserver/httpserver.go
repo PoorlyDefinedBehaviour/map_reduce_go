@@ -8,15 +8,16 @@ import (
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/master"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/memory"
 )
 
 // HTTP server used to receive new task requests from clients.
 type HTTPServer struct {
 	mux    *http.ServeMux
-	master *master.Master
+	master *master.IOHandler
 }
 
-func New(master *master.Master) *HTTPServer {
+func New(master *master.IOHandler) *HTTPServer {
 	srv := &HTTPServer{
 		mux:    http.NewServeMux(),
 		master: master,
@@ -68,13 +69,21 @@ func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requestsMemory, err := memory.FromStringToBytes(newTaskRequest.Requests.Memory)
+	if err != nil {
+		_, _ = w.Write([]byte(err.Error()))
+		w.WriteHeader(http.StatusInternalServerError)
+
+		return
+	}
+
 	validatedInput, err := master.NewValidatedInput(contracts.Input{
 		File:                newTaskRequest.File,
 		Script:              string(scriptString),
 		NumberOfMapTasks:    uint32(newTaskRequest.NumberOfMapTasks),
 		NumberOfReduceTasks: uint32(newTaskRequest.NumberOfReduceTasks),
 		NumberOfPartitions:  uint32(newTaskRequest.NumberOfPartitions),
-		RequestsMemory:      newTaskRequest.Requests.Memory,
+		RequestsMemory:      requestsMemory,
 	})
 	if err != nil {
 		_, _ = w.Write([]byte(err.Error()))
@@ -83,10 +92,14 @@ func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := srv.master.OnNewTask(ctx, validatedInput); err != nil {
+	result, err := srv.master.ExecuteTask(ctx, validatedInput)
+	if err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
+
+	_, _ = w.Write(result)
+
 }

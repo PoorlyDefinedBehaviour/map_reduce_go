@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestToBytes(t *testing.T) {
+func TestFromStringToBytes(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -63,7 +63,7 @@ func TestToBytes(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.input, func(t *testing.T) {
-			n, err := ToBytes(tt.input)
+			n, err := FromStringToBytes(tt.input)
 
 			if tt.expectedErr == "" {
 				assert.Equal(t, tt.expectedOutput, n)

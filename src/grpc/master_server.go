@@ -15,7 +15,7 @@ import (
 type MasterServer struct {
 	proto.UnimplementedMasterServer
 	config MasterServerConfig
-	master *master.Master
+	master *master.IOHandler
 }
 
 type MasterServerConfig struct {
@@ -23,7 +23,7 @@ type MasterServerConfig struct {
 	Port uint16
 }
 
-func NewMasterServer(config MasterServerConfig, master *master.Master) *MasterServer {
+func NewMasterServer(config MasterServerConfig, master *master.IOHandler) *MasterServer {
 	return &MasterServer{config: config, master: master}
 }
 
@@ -46,7 +46,10 @@ func (s *MasterServer) Heartbeat(ctx context.Context, in *proto.HeartbeatRequest
 	if err != nil {
 		return &proto.HeartbeatReply{}, fmt.Errorf("parsing worker state: state=%+v %w", in.State, err)
 	}
-	if err := s.master.HeartbeatReceived(ctx, workerState, in.WorkerAddr); err != nil {
+	if err := s.master.OnMessage(ctx, &master.HeartbeatMessage{
+		WorkerState: workerState,
+		WorkerAddr:  in.WorkerAddr,
+	}); err != nil {
 		return &proto.HeartbeatReply{}, fmt.Errorf("handling heartbeat: %w", err)
 	}
 
@@ -66,7 +69,10 @@ func (s *MasterServer) MapTasksCompleted(ctx context.Context, in *proto.MapTasks
 		tasks = append(tasks, task)
 	}
 
-	if err := s.master.OnMapTasksCompletedReceived(ctx, in.WorkerAddr, tasks); err != nil {
+	if err := s.master.OnMessage(ctx, &master.MapTasksCompletedMessage{
+		WorkerAddr: in.WorkerAddr,
+		Tasks:      tasks,
+	}); err != nil {
 		return &proto.MapTasksCompletedReply{}, fmt.Errorf("handling MapTasksCompletedRequest: %w", err)
 	}
 

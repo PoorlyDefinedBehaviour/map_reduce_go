@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/clock"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/config"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/filestorage"
 
@@ -61,27 +62,28 @@ func main() {
 
 		fmt.Printf("\n\naaaaaaa cfg.MaxWorkerHeartbeatInterval %+v\n\n", cfg.MaxWorkerHeartbeatInterval)
 		partitioner := partitioning.NewLinePartitioner()
-		master, err := master.New(master.Config{
+		m, err := master.New(master.Config{
 			WorkspaceFolder:            cfg.WorkspaceFolder,
 			NumberOfMapWorkers:         3,
 			MaxWorkerHeartbeatInterval: cfg.MaxWorkerHeartbeatInterval,
 		},
 			partitioner,
 			messageBus,
+			clock.New(),
 		)
 		if err != nil {
 			panic(fmt.Errorf("instantiating master: %w", err))
 		}
 
-		go master.ControlLoop(ctx)
+		masterIO := master.NewIOHandler(ctx, m)
 
 		go func() {
-			if err := grpc.NewMasterServer(grpc.MasterServerConfig{Port: 8001}, master).Start(); err != nil {
+			if err := grpc.NewMasterServer(grpc.MasterServerConfig{Port: 8001}, masterIO).Start(); err != nil {
 				panic(fmt.Errorf("starting grpc server: %w", err))
 			}
 		}()
 
-		httpServer := httpserver.New(master)
+		httpServer := httpserver.New(masterIO)
 		if err := httpServer.Start(":8002"); err != nil {
 			panic(fmt.Errorf("starting http server: %w", err))
 		}

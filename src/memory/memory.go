@@ -10,7 +10,7 @@ const (
 	mib uint64 = 1048576
 )
 
-func ToBytes(memory string) (uint64, error) {
+func FromStringToBytes(memory string) (uint64, error) {
 	if strings.HasSuffix(memory, "Mi") {
 		n, err := strconv.ParseUint(strings.TrimSuffix(memory, "Mi"), 10, 64)
 

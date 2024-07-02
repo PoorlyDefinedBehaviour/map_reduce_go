@@ -34,7 +34,7 @@ type InputMessage interface {
 }
 
 type NewTaskMessage struct {
-	input ValidatedInput
+	Input ValidatedInput
 }
 
 func (*NewTaskMessage) inputMessage() string {
@@ -80,7 +80,6 @@ type Master struct {
 	// The workers available.
 	workers     map[contracts.WorkerAddr]*worker
 	partitioner partitioning.Partitioner
-	bus         contracts.MessageBus
 	clock       contracts.Clock
 }
 
@@ -101,8 +100,10 @@ type Config struct {
 }
 
 type task struct {
-	id       contracts.TaskID
-	taskType taskType
+	id contracts.TaskID
+	// The amount of memory the task will require in bytes.
+	requestsMemory uint64
+	taskType       taskType
 	// The script that the worker should execute.
 	script string
 
@@ -116,8 +117,9 @@ func (t *task) IsCompleted() bool {
 }
 
 type pendingFile struct {
-	fileID   contracts.FileID
-	filePath string
+	fileID    contracts.FileID
+	filePath  string
+	sizeBytes uint64
 	// The address of the worker that's processing the file.
 	// May be empty if there's not worker assigned yet.
 	workerAddr contracts.WorkerAddr
@@ -147,14 +149,13 @@ func New(config Config, partitioner partitioning.Partitioner, bus contracts.Mess
 		tasks:       make(map[contracts.TaskID]*task, 0),
 		workers:     make(map[string]*worker),
 		partitioner: partitioner,
-		bus:         bus,
 		clock:       clock,
 	}
 
 	return master, nil
 }
 
-func (master *Master) ControlLoop(ctx context.Context) {
+func (master *Master) controlLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -220,20 +221,20 @@ func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]Assign
 
 	switch msg := msg.(type) {
 	case *HeartbeatMessage:
-		master.OnHeartbeatReceived(ctx, msg)
+		master.onHeartbeatReceived(msg)
 
 	case CleanFailedWorkersMessage:
 		master.cleanUpFailedWorkers()
 
 	case *NewTaskMessage:
-		assignments, err := master.OnNewTask(ctx, msg.input)
+		assignments, err := master.onNewTask(msg.Input)
 		if err != nil {
 			return assignments, fmt.Errorf("handling NewTaskMessage: %w", err)
 		}
 		return assignments, nil
 
 	case *MapTasksCompletedMessage:
-		assignments, err := master.OnMapTasksCompletedReceived(ctx, msg.WorkerAddr, msg.Tasks)
+		assignments, err := master.onMapTasksCompletedReceived(msg.WorkerAddr, msg.Tasks)
 		if err != nil {
 			return nil, fmt.Errorf("handling MapTasksCompletedMessage: %w", err)
 		}
@@ -246,7 +247,7 @@ func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]Assign
 	return nil, nil
 }
 
-func (master *Master) OnHeartbeatReceived(ctx context.Context, msg *HeartbeatMessage) {
+func (master *Master) onHeartbeatReceived(msg *HeartbeatMessage) {
 	master.workers[msg.WorkerAddr] = &worker{
 		lastHeartbeatAt: master.clock.Now(),
 		addr:            msg.WorkerAddr,
@@ -256,7 +257,7 @@ func (master *Master) OnHeartbeatReceived(ctx context.Context, msg *HeartbeatMes
 }
 
 // Called when a new task is received. New tasks are sent by clients.
-func (master *Master) OnNewTask(ctx context.Context, input ValidatedInput) ([]Assignment, error) {
+func (master *Master) onNewTask(input ValidatedInput) ([]Assignment, error) {
 	partitionFilePaths, err := master.partitioner.Partition(
 		input.value.File,
 		master.config.WorkspaceFolder,
@@ -270,11 +271,12 @@ func (master *Master) OnNewTask(ctx context.Context, input ValidatedInput) ([]As
 
 	// Create tasks that will be assigned to workers later.
 	task := &task{
-		id:          master.getNextTaskID(),
-		taskType:    taskTypeMap,
-		script:      input.value.Script,
-		files:       files,
-		outputFiles: make(map[contracts.FileID]contracts.OutputFile),
+		id:             master.getNextTaskID(),
+		requestsMemory: input.value.RequestsMemory,
+		taskType:       taskTypeMap,
+		script:         input.value.Script,
+		files:          files,
+		outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
 	}
 
 	assignment, err := master.tryAssignTask(task)
@@ -287,7 +289,7 @@ func (master *Master) OnNewTask(ctx context.Context, input ValidatedInput) ([]As
 	return []Assignment{*assignment}, nil
 }
 
-func (master *Master) OnMapTasksCompletedReceived(ctx context.Context, workerAddr contracts.WorkerAddr, tasks []contracts.CompletedTask) ([]Assignment, error) {
+func (master *Master) onMapTasksCompletedReceived(workerAddr contracts.WorkerAddr, tasks []contracts.CompletedTask) ([]Assignment, error) {
 	for _, completedTask := range tasks {
 		task, ok := master.tasks[completedTask.TaskID]
 		if !ok {
@@ -304,6 +306,27 @@ func (master *Master) OnMapTasksCompletedReceived(ctx context.Context, workerAdd
 		}
 	}
 
+	for _, t := range master.tasks {
+		if t.IsCompleted() && t.taskType == taskTypeReduce {
+			files := make(map[contracts.FileID]pendingFile)
+			for _, file := range t.outputFiles {
+				files[file.FileID] = pendingFile{
+					fileID:    file.FileID,
+					filePath:  file.FilePath,
+					sizeBytes: file.SizeBytes,
+				}
+			}
+			master.tasks[t.id] = &task{
+				id:             t.id,
+				requestsMemory: t.requestsMemory,
+				taskType:       taskTypeReduce,
+				script:         t.script,
+				files:          files,
+				outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
+			}
+		}
+	}
+
 	for _, task := range master.tasks {
 		if !task.IsCompleted() {
 			assignment, err := master.tryAssignTask(task)
@@ -312,6 +335,8 @@ func (master *Master) OnMapTasksCompletedReceived(ctx context.Context, workerAdd
 			}
 
 			return []Assignment{*assignment}, nil
+		} else {
+
 		}
 	}
 
@@ -335,7 +360,7 @@ func (master *Master) tryAssignTask(task *task) (*Assignment, error) {
 			continue
 		}
 
-		worker := master.findIdleWorker()
+		worker := master.findWorker(task.requestsMemory)
 		if worker == nil {
 			return nil, ErrNoWorkerAvailable
 		}
