@@ -1,4 +1,4 @@
-package grpc
+package grpcclient
 
 import (
 	"context"
@@ -34,13 +34,17 @@ func NewMasterClient(config MasterClientConfig) (*MasterClient, error) {
 	}, nil
 }
 
-func (client *MasterClient) Heartbeat(ctx context.Context, workerState contracts.WorkerState, workerAddr string) error {
-	if _, err := client.grpcClient.Heartbeat(ctx, &proto.HeartbeatRequest{
-		State:      proto.WorkerState(workerState.Value),
-		WorkerAddr: workerAddr,
-	}); err != nil {
+func (client *MasterClient) Heartbeat(ctx context.Context, workerAddr string, memoryAvailable uint64) error {
+	_, err := withReconnect(client.conn, func() (*proto.HeartbeatReply, error) {
+		return client.grpcClient.Heartbeat(ctx, &proto.HeartbeatRequest{
+			WorkerAddr:      workerAddr,
+			MemoryAvailable: memoryAvailable,
+		})
+	})
+	if err != nil {
 		return fmt.Errorf("sending HeartBeat request: %w", err)
 	}
+
 	return nil
 }
 
@@ -49,13 +53,20 @@ func (client *MasterClient) MapTasksCompleted(ctx context.Context, workerAddr st
 	for _, task := range tasks {
 		protoTask := &proto.Task{TaskID: uint64(task.TaskID)}
 		for _, outputFile := range task.OutputFiles {
-			protoTask.OutputFiles = append(protoTask.OutputFiles, &proto.File{Path: outputFile.FilePath, SizeBytes: outputFile.SizeBytes})
+			protoTask.OutputFiles = append(protoTask.OutputFiles, &proto.File{
+				FileID:    uint64(outputFile.FileID),
+				Path:      outputFile.FilePath,
+				SizeBytes: outputFile.SizeBytes,
+			})
 		}
 		protoTasks = append(protoTasks, protoTask)
 	}
 
-	if _, err := client.grpcClient.MapTasksCompleted(ctx, &proto.MapTasksCompletedRequest{WorkerAddr: workerAddr, Tasks: protoTasks}); err != nil {
-		return fmt.Errorf("handling MapTasksCompleted message: %w", err)
+	_, err := withReconnect(client.conn, func() (*proto.MapTasksCompletedReply, error) {
+		return client.grpcClient.MapTasksCompleted(ctx, &proto.MapTasksCompletedRequest{WorkerAddr: workerAddr, Tasks: protoTasks})
+	})
+	if err != nil {
+		return fmt.Errorf("send MapTasksCompleted message to master: %w", err)
 	}
 	return nil
 }

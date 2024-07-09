@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
+	io "github.com/poorlydefinedbehaviour/map_reduce_go/src/io_handler"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/master"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/proto"
 
@@ -15,7 +16,7 @@ import (
 type MasterServer struct {
 	proto.UnimplementedMasterServer
 	config MasterServerConfig
-	master *master.IOHandler
+	master *io.IOHandler
 }
 
 type MasterServerConfig struct {
@@ -23,7 +24,7 @@ type MasterServerConfig struct {
 	Port uint16
 }
 
-func NewMasterServer(config MasterServerConfig, master *master.IOHandler) *MasterServer {
+func NewMasterServer(config MasterServerConfig, master *io.IOHandler) *MasterServer {
 	return &MasterServer{config: config, master: master}
 }
 
@@ -42,13 +43,10 @@ func (s *MasterServer) Start() error {
 }
 
 func (s *MasterServer) Heartbeat(ctx context.Context, in *proto.HeartbeatRequest) (*proto.HeartbeatReply, error) {
-	workerState, err := contracts.NewWorkerState(int8(in.State))
-	if err != nil {
-		return &proto.HeartbeatReply{}, fmt.Errorf("parsing worker state: state=%+v %w", in.State, err)
-	}
+
 	if err := s.master.OnMessage(ctx, &master.HeartbeatMessage{
-		WorkerState: workerState,
-		WorkerAddr:  in.WorkerAddr,
+		WorkerAddr:      in.WorkerAddr,
+		MemoryAvailable: in.MemoryAvailable,
 	}); err != nil {
 		return &proto.HeartbeatReply{}, fmt.Errorf("handling heartbeat: %w", err)
 	}
@@ -63,7 +61,21 @@ func (s *MasterServer) MapTasksCompleted(ctx context.Context, in *proto.MapTasks
 		task := contracts.CompletedTask{TaskID: contracts.TaskID(t.TaskID)}
 
 		for _, file := range t.OutputFiles {
-			task.OutputFiles = append(task.OutputFiles, contracts.OutputFile{FilePath: file.Path, SizeBytes: file.SizeBytes})
+			if file.FileID == 0 {
+				return nil, fmt.Errorf("output file id is required")
+			}
+			if file.Path == "" {
+				return nil, fmt.Errorf("output file path is required")
+			}
+			if file.SizeBytes == 0 {
+				return nil, fmt.Errorf("output file size in bytes is required")
+			}
+
+			task.OutputFiles = append(task.OutputFiles, contracts.OutputFile{
+				FileID:    contracts.FileID(file.FileID),
+				FilePath:  file.Path,
+				SizeBytes: file.SizeBytes,
+			})
 		}
 
 		tasks = append(tasks, task)

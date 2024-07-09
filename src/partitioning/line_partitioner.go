@@ -64,35 +64,30 @@ func (partitioner *LinePartitioner) Partition(filepath string, outputFolder stri
 	scanner := bufio.NewScanner(file)
 
 	for partitionNumber := range maxNumberOfPartitions {
-		partitionFilePath := path.Join(outputFolder, fmt.Sprintf("input_%d", partitionNumber))
-
 		var partitionFile *os.File
+		partitionFilePath := path.Join(outputFolder, fmt.Sprintf("input_%d", partitionNumber))
 
 		for range maxLinesPerPartition {
 			// Reached the end of the file.
 			if !scanner.Scan() {
-				if partitionFile == nil {
-					return partitionFilePaths, nil
-				}
-
-				if err := partitionFile.Sync(); err != nil {
-					return nil, fmt.Errorf("syncing partition file: path=%s %w", partitionFilePath, err)
-				}
-
-				partitionFilePaths = append(partitionFilePaths, partitionFilePath)
-
 				return partitionFilePaths, nil
 			}
 
-			partitionFile, err = os.OpenFile(partitionFilePath, os.O_RDWR|os.O_CREATE, 0644)
-			if err != nil {
-				return nil, fmt.Errorf("creating/opening partition file: path=%s %w", partitionFilePath, err)
-			}
-			defer func() {
-				if closeErr := partitionFile.Close(); closeErr != nil {
-					err = errors.Join(err, fmt.Errorf("closing partition file: path=%s %w", partitionFilePath, closeErr))
+			if partitionFile == nil {
+				partitionFile, err = os.OpenFile(partitionFilePath, os.O_RDWR|os.O_CREATE, 0644)
+				if err != nil {
+					return nil, fmt.Errorf("creating/opening partition file: path=%s %w", partitionFilePath, err)
 				}
-			}()
+				defer func() {
+					if syncErr := partitionFile.Sync(); syncErr != nil {
+						err = errors.Join(err, fmt.Errorf("syncing partition file: path=%s %w", partitionFilePath, syncErr))
+					}
+
+					if closeErr := partitionFile.Close(); closeErr != nil {
+						err = errors.Join(err, fmt.Errorf("closing partition file: path=%s %w", partitionFilePath, closeErr))
+					}
+				}()
+			}
 
 			if _, err := partitionFile.Write(scanner.Bytes()); err != nil {
 				return nil, fmt.Errorf("writing to partition file: %w", err)
@@ -100,10 +95,6 @@ func (partitioner *LinePartitioner) Partition(filepath string, outputFolder stri
 			if _, err := partitionFile.Write([]byte{'\n'}); err != nil {
 				return nil, fmt.Errorf("writing \\n to partition file: %w", err)
 			}
-		}
-
-		if err := partitionFile.Sync(); err != nil {
-			return nil, fmt.Errorf("syncing partition file: path=%s %w", partitionFilePath, err)
 		}
 
 		partitionFilePaths = append(partitionFilePaths, partitionFilePath)

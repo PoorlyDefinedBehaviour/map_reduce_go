@@ -4,9 +4,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+
 	"net/http"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
+	io "github.com/poorlydefinedbehaviour/map_reduce_go/src/io_handler"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/master"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/memory"
 )
@@ -14,10 +16,10 @@ import (
 // HTTP server used to receive new task requests from clients.
 type HTTPServer struct {
 	mux    *http.ServeMux
-	master *master.IOHandler
+	master *io.IOHandler
 }
 
-func New(master *master.IOHandler) *HTTPServer {
+func New(master *io.IOHandler) *HTTPServer {
 	srv := &HTTPServer{
 		mux:    http.NewServeMux(),
 		master: master,
@@ -55,24 +57,24 @@ func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
 	var newTaskRequest NewTaskRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&newTaskRequest); err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
 
 	scriptString, err := base64.StdEncoding.DecodeString(newTaskRequest.ScriptBase64)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
 
 	requestsMemory, err := memory.FromStringToBytes(newTaskRequest.Requests.Memory)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -86,16 +88,16 @@ func (srv *HTTPServer) handleNewTask(w http.ResponseWriter, r *http.Request) {
 		RequestsMemory:      requestsMemory,
 	})
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
 
 	result, err := srv.master.ExecuteTask(ctx, validatedInput)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}

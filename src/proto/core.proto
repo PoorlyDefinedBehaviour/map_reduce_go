@@ -9,15 +9,8 @@ service Master {
   rpc MapTasksCompleted(MapTasksCompletedRequest) returns (MapTasksCompletedReply) {}
 }
 
-enum WorkerState {
-  NULL = 0;
-  IDLE = 1;
-  WORKING = 2;
-}
-
 message HeartbeatRequest {
   string workerAddr = 1;  
-  WorkerState state = 2;
   uint64 memoryAvailable = 3;
 }
 
@@ -27,7 +20,8 @@ message HeartbeatReply {
 
 message File {
   string path = 1;
-  uint64 sizeBytes = 2;
+  uint64 fileID = 2;
+  uint64 sizeBytes = 3;
 }
 
 message Task {
@@ -45,17 +39,18 @@ message MapTasksCompletedReply {
 }
 
 service Worker {
-  rpc AssignMapTask(AssignMapTaskRequest) returns (AssignMapTaskRequestReply) {}
+  rpc AssignTask(AssignTaskRequest) returns (AssignTaskRequestReply) {}
 }
 
-message AssignMapTaskRequest {
+message AssignTaskRequest {
   uint64 taskID = 1;
   uint64 fileID = 2;
   string filePath = 3;
   string script = 4;
+  uint32 taskType = 5;
 }
 
-message AssignMapTaskRequestReply {
+message AssignTaskRequestReply {
 
 }
 

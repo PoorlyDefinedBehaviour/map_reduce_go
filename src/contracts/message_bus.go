@@ -5,5 +5,5 @@ import (
 )
 
 type MessageBus interface {
-	AssignMapTask(ctx context.Context, workerAddr string, task MapTask) error
+	AssignMapTask(ctx context.Context, workerAddr string, task Task) error
 }

@@ -10,7 +10,7 @@ import (
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/clock"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
-	"github.com/poorlydefinedbehaviour/map_reduce_go/src/inmemory"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/memory"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/partitioning"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,12 +32,12 @@ func Test_OnMessage_HeartbeatMessage(t *testing.T) {
 	t.Parallel()
 
 	clock := clock.NewMock()
-	m, err := New(Config{NumberOfMapWorkers: 10, WorkspaceFolder: "todo", MaxWorkerHeartbeatInterval: 10 * time.Millisecond}, nil, nil, clock)
+	m, err := New(Config{NumberOfMapWorkers: 10, WorkspaceFolder: "todo", MaxWorkerHeartbeatInterval: 10 * time.Millisecond}, nil, clock)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 
-	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerState: contracts.WorkerStateIdle, WorkerAddr: "127.0.0.1:8080"})
+	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerAddr: "127.0.0.1:8080"})
 	require.NoError(t, err)
 	assert.Empty(t, out)
 }
@@ -46,7 +46,7 @@ func Test_OnMessage_CleanFailedWorkersMessage(t *testing.T) {
 	t.Parallel()
 
 	clock := clock.NewMock()
-	m, err := New(Config{NumberOfMapWorkers: 10, WorkspaceFolder: "todo", MaxWorkerHeartbeatInterval: 10 * time.Millisecond}, nil, nil, clock)
+	m, err := New(Config{NumberOfMapWorkers: 10, WorkspaceFolder: "todo", MaxWorkerHeartbeatInterval: 10 * time.Millisecond}, nil, clock)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -70,7 +70,6 @@ func Test_OnMessage_NewTaskMessage(t *testing.T) {
 		MaxWorkerHeartbeatInterval: 10 * time.Millisecond,
 	},
 		partitioning.NewLinePartitioner(),
-		nil,
 		clock,
 	)
 	require.NoError(t, err)
@@ -82,6 +81,7 @@ func Test_OnMessage_NewTaskMessage(t *testing.T) {
 		NumberOfMapTasks:    3,
 		NumberOfReduceTasks: 3,
 		NumberOfPartitions:  3,
+		RequestsMemory:      100 * memory.Mib,
 	})
 	require.NoError(t, err)
 
@@ -91,7 +91,7 @@ func Test_OnMessage_NewTaskMessage(t *testing.T) {
 
 	// Master receives a heartbeat and registers the worker.
 	// There's 1 worker available now.
-	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerState: contracts.WorkerStateIdle, WorkerAddr: "127.0.0.1:8080"})
+	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerAddr: "127.0.0.1:8080"})
 	require.NoError(t, err)
 	assert.Empty(t, out)
 
@@ -102,7 +102,6 @@ func Test_OnMessage_NewTaskMessage(t *testing.T) {
 	assert.Equal(t, 1, len(out))
 	assert.Equal(t, "127.0.0.1:8080", out[0].WorkerAddr)
 	inProgressTask := out[0]
-	fmt.Printf("\n\naaaaaaa inProgressTask %+v\n\n", inProgressTask)
 
 	// If a new task comes in, it can't be assigned to the worker
 	// because the worker is busy.
@@ -133,7 +132,7 @@ func Test_OnMessage_NewTaskMessage(t *testing.T) {
 func TestCleanUpFailedWorkers(t *testing.T) {
 	t.Parallel()
 
-	m, err := New(Config{NumberOfMapWorkers: 10, WorkspaceFolder: "todo", MaxWorkerHeartbeatInterval: 10 * time.Millisecond}, nil, nil, clock.New())
+	m, err := New(Config{NumberOfMapWorkers: 10, WorkspaceFolder: "todo", MaxWorkerHeartbeatInterval: 10 * time.Millisecond}, nil, clock.New())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -141,7 +140,7 @@ func TestCleanUpFailedWorkers(t *testing.T) {
 	workerA := "127.0.0.1:8080"
 	workerB := "127.0.0.1:8081"
 
-	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerState: contracts.WorkerStateIdle, WorkerAddr: workerA})
+	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerAddr: workerA})
 	require.NoError(t, err)
 	assert.Empty(t, out)
 
@@ -151,7 +150,7 @@ func TestCleanUpFailedWorkers(t *testing.T) {
 	time.Sleep(15 * time.Millisecond)
 
 	// Worker B sends a heartbeat.
-	out, err = m.OnMessage(ctx, &HeartbeatMessage{WorkerState: contracts.WorkerStateIdle, WorkerAddr: workerB})
+	out, err = m.OnMessage(ctx, &HeartbeatMessage{WorkerAddr: workerB})
 	require.NoError(t, err)
 	assert.Empty(t, out)
 
@@ -179,14 +178,13 @@ func TestTryAssignTasks(t *testing.T) {
 		MaxWorkerHeartbeatInterval: 10 * time.Millisecond,
 	},
 		partitioning.NewLinePartitioner(),
-		inmemory.NewMessageBus(),
 		clock.New(),
 	)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 
-	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerState: contracts.WorkerStateIdle, WorkerAddr: "127.0.0.1:8080"})
+	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerAddr: "127.0.0.1:8080"})
 	require.NoError(t, err)
 	assert.Empty(t, out)
 
@@ -198,6 +196,7 @@ func TestTryAssignTasks(t *testing.T) {
 		NumberOfMapTasks:    3,
 		NumberOfReduceTasks: 3,
 		NumberOfPartitions:  3,
+		RequestsMemory:      100 * memory.Mib,
 	})
 	require.NoError(t, err)
 	out, err = m.onNewTask(input)

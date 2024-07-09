@@ -13,7 +13,7 @@ Implementation of a map reduce system as described in [MapReduce: Simplified Dat
 ./dev/run.sh --http.port=9000 --grpc.port=8001 --workspace-folder="./tmp"
 
 # Run N workers
-./dev/run.sh --grpc.port=8010 --master.addr=":8001" --workspace-folder="./tmp/worker_1"
+./dev/run.sh --grpc.port=8010 --master.addr=":8001" --worker.memory=100Mi --workspace-folder="./tmp/worker_1"
 ```
 
 ```console
@@ -26,7 +26,7 @@ curl -X POST localhost:8002/task \
   "numberOfMapTasks": 3,
   "numberOfReduceTasks": 1,
   "requests": {
-     "memory" "64Mi"
+     "memory": "64Mi"
   },
   "scriptBase64": "$(cat word_count.js | base64 -w 0)"
 }

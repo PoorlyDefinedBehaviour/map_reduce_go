@@ -15,12 +15,12 @@ type OutputFile struct {
 
 type MasterClient interface {
 	// Can be used by a worker to send a heartbeat to the master.
-	Heartbeat(ctx context.Context, workerState WorkerState, workerAddr string) error
+	Heartbeat(ctx context.Context, workerAddr string, memoryAvailable uint64) error
 	// Can be used by a worker to let the master know that a set of tasks have been completed.
 	MapTasksCompleted(ctx context.Context, workerAddr string, tasks []CompletedTask) error
 }
 
 type WorkerClient interface {
 	// Used by the master to let a worker know that it should execute a task.
-	AssignMapTask(ctx context.Context, filePath string) error
+	AssignTask(ctx context.Context, task Task) error
 }

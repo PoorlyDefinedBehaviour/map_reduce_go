@@ -7,6 +7,7 @@ import (
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/proto"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/worker"
 
 	"google.golang.org/grpc"
@@ -41,14 +42,19 @@ func (s *WorkerServer) Start() error {
 	return nil
 }
 
-func (s *WorkerServer) AssignMapTask(ctx context.Context, in *proto.AssignMapTaskRequest) (*proto.AssignMapTaskRequestReply, error) {
-	if err := s.worker.OnMapTaskReceived(ctx, contracts.MapTask{
-		ID:       contracts.TaskID(in.TaskID),
-		Script:   in.Script,
-		FileID:   contracts.FileID(in.FileID),
-		FilePath: in.FilePath,
-	}); err != nil {
-		return &proto.AssignMapTaskRequestReply{}, fmt.Errorf("handling new task assignment: %w", err)
-	}
-	return &proto.AssignMapTaskRequestReply{}, nil
+func (s *WorkerServer) AssignTask(ctx context.Context, in *proto.AssignTaskRequest) (*proto.AssignTaskRequestReply, error) {
+	go func() {
+		ctx := context.Background()
+
+		if err := s.worker.OnMapTaskReceived(ctx, contracts.Task{
+			ID:       contracts.TaskID(in.TaskID),
+			TaskType: contracts.TaskType(in.TaskType),
+			Script:   in.Script,
+			FileID:   contracts.FileID(in.FileID),
+			FilePath: in.FilePath,
+		}); err != nil {
+			tracing.Error(context.Background(), "handling new task assignment", "err", err)
+		}
+	}()
+	return &proto.AssignTaskRequestReply{}, nil
 }

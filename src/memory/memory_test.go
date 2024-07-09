@@ -57,7 +57,11 @@ func TestFromStringToBytes(t *testing.T) {
 		},
 		{
 			input:       "10Gi",
-			expectedErr: "unknown memory format: 10Gi",
+			expectedErr: "unknown memory format: '10Gi'",
+		},
+		{
+			input:       "",
+			expectedErr: "memory is required",
 		},
 	}
 

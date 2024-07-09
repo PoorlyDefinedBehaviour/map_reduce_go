@@ -1,4 +1,4 @@
-package grpc
+package grpcclient
 
 import (
 	"context"
@@ -34,13 +34,16 @@ func NewWorkerClient(config WorkerClientConfig) (*WorkerClient, error) {
 	}, nil
 }
 
-func (client *WorkerClient) AssignMapTask(ctx context.Context, task contracts.MapTask) error {
-	if _, err := client.grpcClient.AssignMapTask(ctx, &proto.AssignMapTaskRequest{
-		TaskID:   uint64(task.ID),
-		Script:   task.Script,
-		FileID:   uint64(task.FileID),
-		FilePath: task.FilePath,
-	}); err != nil {
+func (client *WorkerClient) AssignTask(ctx context.Context, task contracts.Task) error {
+	_, err := withReconnect(client.conn, func() (*proto.AssignTaskRequestReply, error) {
+		return client.grpcClient.AssignTask(ctx, &proto.AssignTaskRequest{
+			TaskID:   uint64(task.ID),
+			Script:   task.Script,
+			FileID:   uint64(task.FileID),
+			FilePath: task.FilePath,
+		})
+	})
+	if err != nil {
 		return fmt.Errorf("sending AssignMapTask request: %w", err)
 	}
 	return nil

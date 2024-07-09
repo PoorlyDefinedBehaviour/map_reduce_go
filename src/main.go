@@ -8,6 +8,9 @@ import (
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/clock"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/config"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/filestorage"
+	grpcclient "github.com/poorlydefinedbehaviour/map_reduce_go/src/grpc/clients"
+	io "github.com/poorlydefinedbehaviour/map_reduce_go/src/io_handler"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/grpc"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/httpserver"
@@ -23,11 +26,12 @@ func main() {
 	}
 
 	ctx := context.Background()
+	clock := clock.New()
 
 	if cfg.IsWorker() {
-		fmt.Println("starting worker")
+		tracing.Info(ctx, "starting worker")
 
-		masterClient, err := grpc.NewMasterClient(grpc.MasterClientConfig{Addr: cfg.MasterAddr})
+		masterClient, err := grpcclient.NewMasterClient(grpcclient.MasterClientConfig{Addr: cfg.MasterAddr})
 		if err != nil {
 			panic(fmt.Errorf("creating grpc MasterClient: %w", err))
 		}
@@ -41,7 +45,8 @@ func main() {
 			HeartbeatInterval:        cfg.WorkerHeartbeatInterval,
 			HeartbeatTimeout:         cfg.WorkerHeartbeatTimeout,
 			MapTasksCompletedTimeout: cfg.WorkerMapTasksCompletedTimeout,
-		}, masterClient, fileStorage)
+			MemoryAvailable:          cfg.WorkerMemoryAvailable,
+		}, masterClient, fileStorage, clock)
 		if err != nil {
 			panic(fmt.Errorf("instantiating worker: %w", err))
 		}
@@ -51,16 +56,8 @@ func main() {
 			panic(fmt.Errorf("starting grpc server: %w", err))
 		}
 	} else {
-		fmt.Println("starting master")
+		tracing.Info(ctx, "starting master")
 
-		messageBus, err := grpc.NewMessageBus(grpc.MessageBusConfig{
-			MessageBusConnectionCleanupInterval: cfg.MessageBusConnectionCleanupInterval,
-		})
-		if err != nil {
-			panic(fmt.Errorf("instantiating message bus: %w", err))
-		}
-
-		fmt.Printf("\n\naaaaaaa cfg.MaxWorkerHeartbeatInterval %+v\n\n", cfg.MaxWorkerHeartbeatInterval)
 		partitioner := partitioning.NewLinePartitioner()
 		m, err := master.New(master.Config{
 			WorkspaceFolder:            cfg.WorkspaceFolder,
@@ -68,14 +65,13 @@ func main() {
 			MaxWorkerHeartbeatInterval: cfg.MaxWorkerHeartbeatInterval,
 		},
 			partitioner,
-			messageBus,
-			clock.New(),
+			clock,
 		)
 		if err != nil {
 			panic(fmt.Errorf("instantiating master: %w", err))
 		}
 
-		masterIO := master.NewIOHandler(ctx, m)
+		masterIO := io.NewIOHandler(ctx, m, clock)
 
 		go func() {
 			if err := grpc.NewMasterServer(grpc.MasterServerConfig{Port: 8001}, masterIO).Start(); err != nil {

@@ -8,13 +8,14 @@ import (
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/interpreters/javascript"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
 )
 
 type Worker struct {
 	config       Config
 	masterClient contracts.MasterClient
 	fileStorage  contracts.FileStorage
-	state        contracts.WorkerState
+	clock        contracts.Clock
 }
 
 type Config struct {
@@ -24,6 +25,8 @@ type Config struct {
 	WorkspaceFolder string
 	// The maximum number of bytes each output file can have.
 	MaxFileSizeBytes uint64
+	// The amount of memory this worker has available
+	MemoryAvailable uint64
 	// How long to wait for between sending heartbeat requests.
 	HeartbeatInterval time.Duration
 	// How long to wait for a heartbeat request to complete.
@@ -32,7 +35,7 @@ type Config struct {
 	MapTasksCompletedTimeout time.Duration
 }
 
-func New(config Config, masterClient contracts.MasterClient, fileStorage contracts.FileStorage) (*Worker, error) {
+func New(config Config, masterClient contracts.MasterClient, fileStorage contracts.FileStorage, clock contracts.Clock) (*Worker, error) {
 	if config.Addr == "" {
 		return nil, fmt.Errorf("addr is required")
 	}
@@ -55,7 +58,7 @@ func New(config Config, masterClient contracts.MasterClient, fileStorage contrac
 		config:       config,
 		masterClient: masterClient,
 		fileStorage:  fileStorage,
-		state:        contracts.WorkerStateIdle,
+		clock:        clock,
 	}, nil
 }
 
@@ -65,17 +68,37 @@ func (worker *Worker) HeartbeatControlLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			fmt.Println("sending heartbeat")
 			if err := worker.sendHeartbeat(ctx); err != nil {
-				fmt.Printf("sending heartbeat to master, will sleep before retrying: %s\n", err)
+				tracing.Error(ctx, "sending heartbeat to master, will sleep before retrying", "err", err)
 			}
-			time.Sleep(worker.config.HeartbeatInterval)
+			worker.clock.Sleep(worker.config.HeartbeatInterval)
 		}
-
 	}
 }
 
-func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapTask) error {
+func (worker *Worker) OnReduceTaskReceived(ctx context.Context) error {
+	// TODO: master must send the location of all the files belonging to the partition this
+	// worker is responsible for.
+	// worker must external sort the files
+	// worker passes the sorted files to the user provided reduce function
+	panic("todo")
+}
+
+func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.Task) error {
+	fmt.Printf("\n\naaaaaaa OnMapTaskReceived id=%+v path=%+v\n\n", task.FileID, task.FilePath)
+	if task.ID == 0 {
+		return fmt.Errorf("map task id is required")
+	}
+	if task.Script == "" {
+		return fmt.Errorf("map task script is required")
+	}
+	if task.FileID == 0 {
+		return fmt.Errorf("map task file id is required")
+	}
+	if task.FilePath == "" {
+		return fmt.Errorf("map task file path is required")
+	}
+
 	jsScript, err := javascript.Parse(task.Script)
 	if err != nil {
 		return fmt.Errorf("parsing script: script='%s' %w", task.Script, err)
@@ -93,7 +116,7 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapT
 		return fmt.Errorf("reading file contents: %w", err)
 	}
 
-	outputFolder := fmt.Sprintf("%s/%d", worker.config.WorkspaceFolder, task.ID)
+	outputFolder := fmt.Sprintf("%s/%d/%d", worker.config.WorkspaceFolder, task.ID, task.FileID)
 
 	writer, err := worker.fileStorage.NewWriter(ctx, worker.config.MaxFileSizeBytes, outputFolder)
 	if err != nil {
@@ -111,6 +134,9 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapT
 		}
 		if _, err := writer.Write([]byte(value)); err != nil {
 			return fmt.Errorf("emit: writing key to writer: %w", err)
+		}
+		if _, err := writer.Write([]byte{'\n'}); err != nil {
+			return fmt.Errorf("emit: writing \\n to writer: %w", err)
 		}
 
 		return nil
@@ -146,7 +172,7 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapT
 func (worker *Worker) sendHeartbeat(ctx context.Context) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, worker.config.HeartbeatTimeout)
 	defer cancel()
-	if err := worker.masterClient.Heartbeat(timeoutCtx, worker.state, worker.config.Addr); err != nil {
+	if err := worker.masterClient.Heartbeat(timeoutCtx, worker.config.Addr, worker.config.MemoryAvailable); err != nil {
 		return fmt.Errorf("sending heartbeat to master: %w", err)
 	}
 

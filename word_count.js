@@ -1,3 +1,7 @@
+const partition = () => {
+  // TODO: use this function to partition map output into R regions.
+}
+
 const map = (filename, contents, emit) => {
   for (const word of contents.split(/\s+/)) {
     const trimmedWord = word.trim()

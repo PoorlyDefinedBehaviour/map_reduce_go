@@ -4,30 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/maphash"
 	"sync"
 	"time"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/partitioning"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
 )
 
 var ErrNoWorkerAvailable = errors.New("no worker is available")
-
-type taskState uint8
-type taskType = uint8
-
-const (
-	// The task is ready to be picked up.
-	taskStateIdle taskState = 1 << 0
-	// The task is being executed by some worker.
-	taskStateInProgress taskState = 1 << 1
-	// The task has been executed and is completed.
-	taskStateInCompleted taskState = 1 << 2
-
-	taskTypeMap    taskType = 1 << 0
-	taskTypeReduce taskType = 1 << 1
-)
 
 type InputMessage interface {
 	inputMessage() string
@@ -42,7 +27,6 @@ func (*NewTaskMessage) inputMessage() string {
 }
 
 type HeartbeatMessage struct {
-	WorkerState     contracts.WorkerState
 	WorkerAddr      contracts.WorkerAddr
 	MemoryAvailable uint64
 }
@@ -74,7 +58,7 @@ type OutputMessage interface {
 type Master struct {
 	mu         *sync.Mutex
 	nextTaskID contracts.TaskID
-	config     Config
+	Config     Config
 	// To keep track of the state of each task.
 	tasks map[contracts.TaskID]*task
 	// The workers available.
@@ -84,10 +68,10 @@ type Master struct {
 }
 
 type worker struct {
-	state           contracts.WorkerState
 	lastHeartbeatAt time.Time
 	addr            contracts.WorkerAddr
 	memoryAvailable uint64
+	memoryInUse     uint64
 }
 
 type Config struct {
@@ -103,7 +87,7 @@ type task struct {
 	id contracts.TaskID
 	// The amount of memory the task will require in bytes.
 	requestsMemory uint64
-	taskType       taskType
+	taskType       contracts.TaskType
 	// The script that the worker should execute.
 	script string
 
@@ -125,14 +109,19 @@ type pendingFile struct {
 	workerAddr contracts.WorkerAddr
 }
 
+func (f *pendingFile) isAssignedToWorker() bool {
+	return f.workerAddr != ""
+}
+
 type Assignment struct {
+	TaskType contracts.TaskType
 	// The worker that should receive the task.
 	WorkerAddr string
 	// The task that should be given to the worker.
-	Task contracts.MapTask
+	Task contracts.Task
 }
 
-func New(config Config, partitioner partitioning.Partitioner, bus contracts.MessageBus, clock contracts.Clock) (*Master, error) {
+func New(config Config, partitioner partitioning.Partitioner, clock contracts.Clock) (*Master, error) {
 	if config.NumberOfMapWorkers == 0 {
 		return nil, fmt.Errorf("number of map workers must be greater than 0")
 	}
@@ -145,7 +134,7 @@ func New(config Config, partitioner partitioning.Partitioner, bus contracts.Mess
 	master := &Master{
 		mu:          &sync.Mutex{},
 		nextTaskID:  1,
-		config:      config,
+		Config:      config,
 		tasks:       make(map[contracts.TaskID]*task, 0),
 		workers:     make(map[string]*worker),
 		partitioner: partitioner,
@@ -155,29 +144,9 @@ func New(config Config, partitioner partitioning.Partitioner, bus contracts.Mess
 	return master, nil
 }
 
-func (master *Master) controlLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			out, err := master.OnMessage(ctx, CleanFailedWorkersMessage{})
-			if err != nil {
-				// This message should never result in an error.
-				panic(fmt.Errorf("unexpected error handling CleanFailedWorkersMessage: %w", err))
-			}
-			if len(out) > 0 {
-				// This message should never result in outgoing messages.
-				panic(fmt.Sprintf("unexpected output messages handling CleanFailedWorkersMessage: %+v", out))
-			}
-			master.clock.Sleep(master.config.MaxWorkerHeartbeatInterval * 2)
-		}
-	}
-}
-
 func (master *Master) cleanUpFailedWorkers() {
 	for _, worker := range master.workers {
-		if master.clock.Since(worker.lastHeartbeatAt) >= master.config.MaxWorkerHeartbeatInterval {
+		if master.clock.Since(worker.lastHeartbeatAt) >= master.Config.MaxWorkerHeartbeatInterval {
 			delete(master.workers, worker.addr)
 		}
 	}
@@ -221,7 +190,9 @@ func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]Assign
 
 	switch msg := msg.(type) {
 	case *HeartbeatMessage:
-		master.onHeartbeatReceived(msg)
+		if err := master.onHeartbeatReceived(msg); err != nil {
+			return nil, fmt.Errorf("handling heartbeat message: %w", err)
+		}
 
 	case CleanFailedWorkersMessage:
 		master.cleanUpFailedWorkers()
@@ -231,6 +202,7 @@ func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]Assign
 		if err != nil {
 			return assignments, fmt.Errorf("handling NewTaskMessage: %w", err)
 		}
+
 		return assignments, nil
 
 	case *MapTasksCompletedMessage:
@@ -247,20 +219,26 @@ func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]Assign
 	return nil, nil
 }
 
-func (master *Master) onHeartbeatReceived(msg *HeartbeatMessage) {
+func (master *Master) onHeartbeatReceived(msg *HeartbeatMessage) error {
+	if msg.WorkerAddr == "" {
+		return fmt.Errorf("worker addr is required")
+	}
+	if msg.MemoryAvailable == 0 {
+		return fmt.Errorf("worker memory available is required")
+	}
 	master.workers[msg.WorkerAddr] = &worker{
 		lastHeartbeatAt: master.clock.Now(),
 		addr:            msg.WorkerAddr,
-		state:           msg.WorkerState,
 		memoryAvailable: msg.MemoryAvailable,
 	}
+	return nil
 }
 
 // Called when a new task is received. New tasks are sent by clients.
 func (master *Master) onNewTask(input ValidatedInput) ([]Assignment, error) {
 	partitionFilePaths, err := master.partitioner.Partition(
 		input.value.File,
-		master.config.WorkspaceFolder,
+		master.Config.WorkspaceFolder,
 		input.value.NumberOfPartitions,
 	)
 	if err != nil {
@@ -273,7 +251,7 @@ func (master *Master) onNewTask(input ValidatedInput) ([]Assignment, error) {
 	task := &task{
 		id:             master.getNextTaskID(),
 		requestsMemory: input.value.RequestsMemory,
-		taskType:       taskTypeMap,
+		taskType:       contracts.TaskTypeMap,
 		script:         input.value.Script,
 		files:          files,
 		outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
@@ -281,6 +259,10 @@ func (master *Master) onNewTask(input ValidatedInput) ([]Assignment, error) {
 
 	assignment, err := master.tryAssignTask(task)
 	if err != nil {
+		if errors.Is(err, ErrNoWorkerAvailable) {
+			tracing.Info(context.Background(), "no workers available", "task", task.id, "requests", input.value.RequestsMemory)
+			return nil, nil
+		}
 		return nil, fmt.Errorf("trying to assign task to a worker: %w", err)
 	}
 
@@ -297,17 +279,21 @@ func (master *Master) onMapTasksCompletedReceived(workerAddr contracts.WorkerAdd
 		}
 
 		for _, outputFile := range completedTask.OutputFiles {
+			if outputFile.FileID == 0 {
+				panic(fmt.Sprintf("Invalid output file id: %+v", outputFile))
+			}
+			if _, ok := task.files[outputFile.FileID]; ok {
+				worker := master.workers[workerAddr]
+				worker.memoryInUse -= task.requestsMemory
+			}
 			delete(task.files, outputFile.FileID)
 			task.outputFiles[outputFile.FileID] = outputFile
-		}
 
-		if worker, ok := master.workers[workerAddr]; ok {
-			worker.state = contracts.WorkerStateIdle
 		}
 	}
 
 	for _, t := range master.tasks {
-		if t.IsCompleted() && t.taskType == taskTypeReduce {
+		if t.IsCompleted() && t.taskType == contracts.TaskTypeMap {
 			files := make(map[contracts.FileID]pendingFile)
 			for _, file := range t.outputFiles {
 				files[file.FileID] = pendingFile{
@@ -319,7 +305,7 @@ func (master *Master) onMapTasksCompletedReceived(workerAddr contracts.WorkerAdd
 			master.tasks[t.id] = &task{
 				id:             t.id,
 				requestsMemory: t.requestsMemory,
-				taskType:       taskTypeReduce,
+				taskType:       contracts.TaskTypeReduce,
 				script:         t.script,
 				files:          files,
 				outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
@@ -331,12 +317,13 @@ func (master *Master) onMapTasksCompletedReceived(workerAddr contracts.WorkerAdd
 		if !task.IsCompleted() {
 			assignment, err := master.tryAssignTask(task)
 			if err != nil {
+				if errors.Is(err, ErrNoWorkerAvailable) {
+					return nil, nil
+				}
 				return nil, fmt.Errorf("trying to assign task to a worker: %w", err)
 			}
 
 			return []Assignment{*assignment}, nil
-		} else {
-
 		}
 	}
 
@@ -346,7 +333,7 @@ func (master *Master) onMapTasksCompletedReceived(workerAddr contracts.WorkerAdd
 func partitionFilePathsToPendingFiles(partitionFilePaths []string) map[contracts.FileID]pendingFile {
 	files := make(map[contracts.FileID]pendingFile, len(partitionFilePaths))
 	for i, filePath := range partitionFilePaths {
-		fileID := contracts.FileID(i)
+		fileID := contracts.FileID(i + 1)
 		files[fileID] = pendingFile{fileID: fileID, filePath: filePath}
 	}
 	return files
@@ -356,7 +343,7 @@ func partitionFilePathsToPendingFiles(partitionFilePaths []string) map[contracts
 func (master *Master) tryAssignTask(task *task) (*Assignment, error) {
 	// Try to find a file that's not assigned to a worker.
 	for _, pendingFile := range task.files {
-		if pendingFile.workerAddr != "" {
+		if pendingFile.isAssignedToWorker() {
 			continue
 		}
 
@@ -365,8 +352,9 @@ func (master *Master) tryAssignTask(task *task) (*Assignment, error) {
 			return nil, ErrNoWorkerAvailable
 		}
 
-		mapTask := contracts.MapTask{
+		mapTask := contracts.Task{
 			ID:       task.id,
+			TaskType: task.taskType,
 			Script:   task.script,
 			FileID:   pendingFile.fileID,
 			FilePath: pendingFile.filePath,
@@ -375,7 +363,7 @@ func (master *Master) tryAssignTask(task *task) (*Assignment, error) {
 		pendingFile := task.files[pendingFile.fileID]
 		pendingFile.workerAddr = worker.addr
 		task.files[pendingFile.fileID] = pendingFile
-		worker.state = contracts.WorkerStateWorking
+		worker.memoryInUse += task.requestsMemory
 
 		return &Assignment{
 			WorkerAddr: worker.addr,
@@ -388,20 +376,10 @@ func (master *Master) tryAssignTask(task *task) (*Assignment, error) {
 
 func (master *Master) findWorker(memoryRequest uint64) *worker {
 	for _, worker := range master.workers {
-		if worker.state == contracts.WorkerStateIdle && worker.memoryAvailable >= memoryRequest {
+		if worker.memoryAvailable-worker.memoryInUse >= memoryRequest {
 			return worker
 		}
 	}
 
 	return nil
-}
-
-// TODO: remove if this won't be used.
-
-// Simple hash(key) % partitions partitioning function.
-func defaultPartitionFunction(key string, numberOfReduceTasks uint32) int64 {
-	var hash maphash.Hash
-	// maphash.hash.Write never fails. See the docs.
-	_, _ = hash.Write([]byte(key))
-	return int64(hash.Sum64()) % int64(numberOfReduceTasks)
 }
