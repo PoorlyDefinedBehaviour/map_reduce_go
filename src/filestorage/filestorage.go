@@ -20,46 +20,48 @@ type FlushOnCloseFile struct {
 }
 
 type inner struct {
-	file            *os.File
-	fileSizeInBytes uint64
-	folder          string
-	fileNumber      uint32
-	maxFilSizeBytes uint64
-	outputFiles     []contracts.StorageFileInfo
+	file        *os.File
+	folder      string
+	files       map[uint32]*os.File
+	outputFiles []contracts.StorageFileInfo
 }
 
-func (f *FlushOnCloseFile) createFile(path string) error {
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("opening/creating file: %w", err)
+func (f FlushOnCloseFile) getRegionFile(region uint32) (*os.File, error) {
+	file, ok := f.inner.files[region]
+	if ok {
+		return file, nil
 	}
-	f.inner.file = file
-	f.inner.fileSizeInBytes = 0
-	f.inner.fileNumber++
+
+	filePath := fmt.Sprintf("%s/region_%d", f.inner.folder, region)
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("opening/creating file: %w", err)
+	}
+
+	f.inner.files[region] = file
+
+	return file, nil
+}
+
+func (f FlushOnCloseFile) WriteKeyValue(k, v string, region uint32) error {
+	file, err := f.getRegionFile(region)
+	if err != nil {
+		return fmt.Errorf("getting region file: %w", err)
+	}
+
+	if _, err := file.WriteString(k); err != nil {
+		return fmt.Errorf("writing key: %w", err)
+	}
+
+	if _, err := file.WriteString(","); err != nil {
+		return fmt.Errorf("writing ',': %w", err)
+	}
+
+	if _, err := file.WriteString(v); err != nil {
+		return fmt.Errorf("writing value: %w", err)
+	}
+
 	return nil
-}
-
-func (f FlushOnCloseFile) Write(p []byte) (n int, err error) {
-	if f.inner.file == nil || f.inner.fileSizeInBytes+uint64(len(p)) > f.inner.maxFilSizeBytes {
-		if f.inner.file != nil {
-			if err := f.syncAndCloseFile(f.inner.file); err != nil {
-				return 0, err
-			}
-		}
-		filePath := fmt.Sprintf("%s/file_%d", f.inner.folder, f.inner.fileNumber)
-		if err := f.createFile(filePath); err != nil {
-			return 0, fmt.Errorf("creating new partition file: %w", err)
-		}
-	}
-
-	n, err = f.inner.file.Write(p)
-	if err != nil {
-		return n, fmt.Errorf("writing to file: %w", err)
-	}
-
-	f.inner.fileSizeInBytes += uint64(len(p))
-
-	return n, nil
 }
 
 func (f FlushOnCloseFile) OutputFiles() []contracts.StorageFileInfo {
@@ -74,16 +76,31 @@ func (f *FlushOnCloseFile) syncAndCloseFile(file *os.File) error {
 		return fmt.Errorf("closing file: %w", err)
 	}
 
-	f.inner.outputFiles = append(f.inner.outputFiles, contracts.StorageFileInfo{Path: file.Name(), SizeBytes: f.inner.fileSizeInBytes})
+	stat, err := os.Stat(file.Name())
+	if err != nil {
+		return fmt.Errorf("calling stat on file: %w", err)
+	}
+
+	f.inner.outputFiles = append(f.inner.outputFiles, contracts.StorageFileInfo{
+		Path:      file.Name(),
+		SizeBytes: uint64(stat.Size()),
+	})
 
 	return nil
 }
 
 func (f FlushOnCloseFile) Close() error {
-	return f.syncAndCloseFile(f.inner.file)
+	for _, file := range f.inner.files {
+		if err := f.syncAndCloseFile(file); err != nil {
+			return err
+		}
+	}
+
+	return nil
+
 }
 
-func (storage *FileStorage) Open(ctx context.Context, filePath string) (io.ReadCloser, error) {
+func (storage *FileStorage) NewReader(ctx context.Context, filePath string) (io.ReadCloser, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return file, fmt.Errorf("trying to open file on local disk: path=%s %w", filePath, err)
@@ -91,12 +108,12 @@ func (storage *FileStorage) Open(ctx context.Context, filePath string) (io.ReadC
 	return file, nil
 }
 
-func (storage *FileStorage) NewWriter(ctx context.Context, maxFileSizeBytes uint64, folder string) (contracts.FileWriter, error) {
+func (storage *FileStorage) NewWriter(ctx context.Context, folder string) (contracts.FileWriter, error) {
 	if err := os.MkdirAll(folder, 0750); err != nil {
 		return nil, fmt.Errorf("creating file path: path=%s %w", folder, err)
 	}
 
-	wrapper := FlushOnCloseFile{inner: &inner{folder: folder, maxFilSizeBytes: maxFileSizeBytes}}
+	wrapper := FlushOnCloseFile{inner: &inner{folder: folder}}
 
 	return wrapper, nil
 }

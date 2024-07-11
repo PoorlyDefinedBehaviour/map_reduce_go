@@ -1,14 +1,19 @@
 package worker
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path"
 	"time"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/interpreters/javascript"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
+	"golang.org/x/sync/errgroup"
 )
 
 type Worker struct {
@@ -33,6 +38,8 @@ type Config struct {
 	HeartbeatTimeout time.Duration
 	// How long to wait for a request to let the master know which map tasks have been completed to complete.
 	MapTasksCompletedTimeout time.Duration
+	// The max number of files that can be downloaded at the same time.
+	MaxInflightFileDownloads uint32
 }
 
 func New(config Config, masterClient contracts.MasterClient, fileStorage contracts.FileStorage, clock contracts.Clock) (*Worker, error) {
@@ -54,6 +61,9 @@ func New(config Config, masterClient contracts.MasterClient, fileStorage contrac
 	if config.MapTasksCompletedTimeout == 0 {
 		return nil, fmt.Errorf("map tasks completed request timeout is required")
 	}
+	if config.MaxInflightFileDownloads == 0 {
+		return nil, fmt.Errorf("max inflight file downloads is required")
+	}
 	return &Worker{
 		config:       config,
 		masterClient: masterClient,
@@ -62,6 +72,7 @@ func New(config Config, masterClient contracts.MasterClient, fileStorage contrac
 	}, nil
 }
 
+// TODO: move to IO driver
 func (worker *Worker) HeartbeatControlLoop(ctx context.Context) {
 	for {
 		select {
@@ -76,15 +87,72 @@ func (worker *Worker) HeartbeatControlLoop(ctx context.Context) {
 	}
 }
 
-func (worker *Worker) OnReduceTaskReceived(ctx context.Context) error {
+func (worker *Worker) OnReduceTaskReceived(ctx context.Context, task contracts.ReduceTask) error {
+	// TODO: check if a mutex wil be needed
+
 	// TODO: master must send the location of all the files belonging to the partition this
 	// worker is responsible for.
 	// worker must external sort the files
 	// worker passes the sorted files to the user provided reduce function
-	panic("todo")
+	var wg errgroup.Group
+	wg.SetLimit(int(worker.config.MaxInflightFileDownloads))
+
+	for _, file := range task.Files {
+		wg.Go(func() error {
+			if err := worker.downloadFile(ctx, task.ID, file.FileID, file.Path); err != nil {
+				return fmt.Errorf("downloading file: path=%s %w", file.Path, err)
+			}
+			return nil
+		})
+	}
+
+	// Wait for the files to be downloaded
+	if err := wg.Wait(); err != nil {
+		return fmt.Errorf("downloading reduce task files: %w", err)
+	}
+
+	return nil
 }
 
-func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.Task) error {
+func (worker *Worker) downloadFile(ctx context.Context, taskID contracts.TaskID, fileID uint64, filePath string) (err error) {
+	path := path.Join(worker.config.WorkspaceFolder, fmt.Sprint(taskID), "reduce", fmt.Sprintf("input_%d", fileID))
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return fmt.Errorf("creating/opening file: path=%s %w", filePath, err)
+	}
+	defer func() {
+		if syncErr := file.Sync(); syncErr != nil {
+			err = errors.Join(err, fmt.Errorf("syncing file: %w", syncErr))
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("closing file: %w", closeErr))
+		}
+	}()
+	reader, err := worker.fileStorage.NewReader(ctx, filePath)
+	if err != nil {
+		return fmt.Errorf("reading file: %w", err)
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("closing reader: %w", closeErr))
+		}
+	}()
+
+	writer := bufio.NewWriter(file)
+	defer func() {
+		if closeErr := writer.Flush(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("flushing writer: %w", closeErr))
+		}
+	}()
+
+	if _, err := io.Copy(writer, reader); err != nil {
+		return fmt.Errorf("copying bytes to file: %w", err)
+	}
+
+	return nil
+}
+
+func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapTask) error {
 	fmt.Printf("\n\naaaaaaa OnMapTaskReceived id=%+v path=%+v\n\n", task.FileID, task.FilePath)
 	if task.ID == 0 {
 		return fmt.Errorf("map task id is required")
@@ -105,7 +173,7 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.Task
 	}
 	defer jsScript.Close()
 
-	reader, err := worker.fileStorage.Open(ctx, task.FilePath)
+	reader, err := worker.fileStorage.NewReader(ctx, task.FilePath)
 	if err != nil {
 		return fmt.Errorf("opening file: path=%s %w", task.FilePath, err)
 	}
@@ -118,7 +186,7 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.Task
 
 	outputFolder := fmt.Sprintf("%s/%d/%d", worker.config.WorkspaceFolder, task.ID, task.FileID)
 
-	writer, err := worker.fileStorage.NewWriter(ctx, worker.config.MaxFileSizeBytes, outputFolder)
+	writer, err := worker.fileStorage.NewWriter(ctx, outputFolder)
 	if err != nil {
 		return fmt.Errorf("creating file storage writer: %w", err)
 	}
@@ -126,17 +194,14 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.Task
 
 	if err := jsScript.Map(task.FilePath, string(contents), func(key, value string) error {
 		fmt.Printf("\n\naaaaaaa Worker.OnMapTaskReceived emit called with: key %+v value %+v\n\n", key, value)
-		if _, err := writer.Write([]byte(key)); err != nil {
-			return fmt.Errorf("emit: writing key to writer: %w", err)
+
+		region, err := jsScript.Partition(key, task.NumberOfReduceTasks)
+		if err != nil {
+			return fmt.Errorf("calling user provided partition function: %w", err)
 		}
-		if _, err := writer.Write([]byte(",")); err != nil {
-			return fmt.Errorf("emit: writing , to writer: %w", err)
-		}
-		if _, err := writer.Write([]byte(value)); err != nil {
-			return fmt.Errorf("emit: writing key to writer: %w", err)
-		}
-		if _, err := writer.Write([]byte{'\n'}); err != nil {
-			return fmt.Errorf("emit: writing \\n to writer: %w", err)
+
+		if err := writer.WriteKeyValue(key, fmt.Sprintf("%s\n", value), region); err != nil {
+			return fmt.Errorf("writing key value: %w", err)
 		}
 
 		return nil

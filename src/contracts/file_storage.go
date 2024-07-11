@@ -11,11 +11,12 @@ type StorageFileInfo struct {
 }
 
 type FileWriter interface {
-	io.WriteCloser
+	io.Closer
+	WriteKeyValue(k, v string, region uint32) error
 	OutputFiles() []StorageFileInfo
 }
 
 type FileStorage interface {
-	Open(ctx context.Context, filePath string) (io.ReadCloser, error)
-	NewWriter(ctx context.Context, maxFileSizeBytes uint64, folder string) (FileWriter, error)
+	NewWriter(ctx context.Context, folder string) (FileWriter, error)
+	NewReader(ctx context.Context, filePath string) (io.ReadCloser, error)
 }

@@ -16,10 +16,10 @@ import (
 // HTTP server used to receive new task requests from clients.
 type HTTPServer struct {
 	mux    *http.ServeMux
-	master *io.IOHandler
+	master *io.MasterIOHandler
 }
 
-func New(master *io.IOHandler) *HTTPServer {
+func New(master *io.MasterIOHandler) *HTTPServer {
 	srv := &HTTPServer{
 		mux:    http.NewServeMux(),
 		master: master,

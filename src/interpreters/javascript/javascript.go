@@ -24,6 +24,45 @@ func newScript(input string) (*Script, error) {
 	return &Script{v8Context: v8Context, scriptValue: scriptValue}, nil
 }
 
+func (script *Script) Partition(key string, numberOfReduceTasks uint32) (uint32, error) {
+	reduceDunction, err := script.v8Context.RunScript("reduce", "script.js")
+	if err != nil {
+		return 0, fmt.Errorf("fetching map function from js: %w", err)
+	}
+	defer reduceDunction.Release()
+
+	fn, err := reduceDunction.AsFunction()
+	if err != nil {
+		return 0, fmt.Errorf("casting value to js function: %w", err)
+	}
+
+	iso := script.v8Context.Isolate()
+
+	keyValue, err := v8go.NewValue(iso, key)
+	if err != nil {
+		return 0, fmt.Errorf("creating js value from key: key=%s %w", key, err)
+	}
+	defer keyValue.Release()
+
+	numTasksValue, err := v8go.NewValue(iso, numberOfReduceTasks)
+	if err != nil {
+		return 0, fmt.Errorf("creating js value from number of reduce tasks: %w", err)
+	}
+	defer numTasksValue.Release()
+
+	result, err := fn.Call(v8go.Undefined(iso), keyValue, numTasksValue)
+	if err != nil {
+		return 0, fmt.Errorf("calling js map function: %w", err)
+	}
+	defer result.Release()
+
+	if !result.IsNumber() {
+		return 0, fmt.Errorf("js function did not return a number")
+	}
+
+	return uint32(result.Integer()), nil
+}
+
 func (script *Script) Map(key, value string, emit func(key, value string) error) error {
 	mapFunction, err := script.v8Context.RunScript("map", "script.js")
 	if err != nil {

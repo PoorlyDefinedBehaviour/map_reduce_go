@@ -71,7 +71,7 @@ func main() {
 			panic(fmt.Errorf("instantiating master: %w", err))
 		}
 
-		masterIO := io.NewIOHandler(ctx, m, clock)
+		masterIO := io.NewMasterIOHandler(ctx, m, clock)
 
 		go func() {
 			if err := grpc.NewMasterServer(grpc.MasterServerConfig{Port: 8001}, masterIO).Start(); err != nil {

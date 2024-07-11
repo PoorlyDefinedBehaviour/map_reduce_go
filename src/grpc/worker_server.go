@@ -42,19 +42,44 @@ func (s *WorkerServer) Start() error {
 	return nil
 }
 
-func (s *WorkerServer) AssignTask(ctx context.Context, in *proto.AssignTaskRequest) (*proto.AssignTaskRequestReply, error) {
+func (s *WorkerServer) AssignMapTask(ctx context.Context, in *proto.AssignMapTaskRequest) (*proto.AssignMapTaskReply, error) {
 	go func() {
 		ctx := context.Background()
 
-		if err := s.worker.OnMapTaskReceived(ctx, contracts.Task{
-			ID:       contracts.TaskID(in.TaskID),
-			TaskType: contracts.TaskType(in.TaskType),
-			Script:   in.Script,
-			FileID:   contracts.FileID(in.FileID),
-			FilePath: in.FilePath,
+		if err := s.worker.OnMapTaskReceived(ctx, contracts.MapTask{
+			ID:                  contracts.TaskID(in.TaskID),
+			NumberOfReduceTasks: in.NumberOfReduceTasks,
+			Script:              in.Script,
+			FileID:              contracts.FileID(in.FileID),
+			FilePath:            in.FilePath,
 		}); err != nil {
 			tracing.Error(context.Background(), "handling new task assignment", "err", err)
 		}
 	}()
-	return &proto.AssignTaskRequestReply{}, nil
+	return &proto.AssignMapTaskReply{}, nil
+}
+
+func (s *WorkerServer) AssignReduceTask(ctx context.Context, in *proto.AssignReduceTaskRequest) (*proto.AssignReduceTaskReply, error) {
+	go func() {
+		ctx := context.Background()
+
+		task := contracts.ReduceTask{
+			ID:     contracts.TaskID(in.TaskID),
+			Script: in.Script,
+			Files:  make([]contracts.File, 0, len(in.Files)),
+		}
+		for _, file := range in.Files {
+			task.Files = append(task.Files, contracts.File{
+				FileID:    file.FileID,
+				SizeBytes: file.SizeBytes,
+				Path:      file.Path,
+			})
+		}
+
+		if err := s.worker.OnReduceTaskReceived(ctx, task); err != nil {
+			tracing.Error(context.Background(), "handling new task assignment", "err", err)
+		}
+	}()
+
+	return &proto.AssignReduceTaskReply{}, nil
 }

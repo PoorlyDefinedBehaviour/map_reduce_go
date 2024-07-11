@@ -11,8 +11,12 @@ type Input struct {
 
 // Type responsible for translating a Go Map call to a javascript, clojure, etc call.
 type Script interface {
+	// Executes the user provided partition function.
+	Partition(key string, numberOfReduceTasks uint32) uint32
+	// Executes the user provided map function.
 	Map(key, value string, emit func(key, value string)) error
-	// Must be called to release resources.
+	// Executes the user provided reduce function.
 	Reduce(key string, nextValueIter func() (string, bool), emit func(key, value string)) error
+	// Must be called to release resources.
 	Close()
 }

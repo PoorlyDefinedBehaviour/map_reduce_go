@@ -22,5 +22,6 @@ type MasterClient interface {
 
 type WorkerClient interface {
 	// Used by the master to let a worker know that it should execute a task.
-	AssignTask(ctx context.Context, task Task) error
+	AssignMapTask(ctx context.Context, task MapTask) error
+	AssignReduceTask(ctx context.Context, task ReduceTask) error
 }

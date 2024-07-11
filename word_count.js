@@ -1,5 +1,11 @@
-const partition = () => {
-  // TODO: use this function to partition map output into R regions.
+const partition = (key, r) => {
+  let hash = 0
+
+  for (const char of key) {
+    hash ^= char.charCodeAt(0)
+  }
+
+  return hash % r
 }
 
 const map = (filename, contents, emit) => {

@@ -19,10 +19,22 @@ const (
 	TaskTypeReduce TaskType = 1 << 1
 )
 
-type Task struct {
-	ID       TaskID
-	TaskType TaskType
-	Script   string
-	FileID   FileID
-	FilePath string
+type MapTask struct {
+	ID                  TaskID
+	NumberOfReduceTasks uint32
+	Script              string
+	FileID              FileID
+	FilePath            string
+}
+
+type ReduceTask struct {
+	ID     TaskID
+	Script string
+	Files  []File
+}
+
+type File struct {
+	FileID    uint64
+	SizeBytes uint64
+	Path      string
 }

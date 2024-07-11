@@ -34,13 +34,31 @@ func NewWorkerClient(config WorkerClientConfig) (*WorkerClient, error) {
 	}, nil
 }
 
-func (client *WorkerClient) AssignTask(ctx context.Context, task contracts.Task) error {
-	_, err := withReconnect(client.conn, func() (*proto.AssignTaskRequestReply, error) {
-		return client.grpcClient.AssignTask(ctx, &proto.AssignTaskRequest{
+func (client *WorkerClient) AssignMapTask(ctx context.Context, task contracts.MapTask) error {
+	_, err := withReconnect(client.conn, func() (*proto.AssignMapTaskReply, error) {
+		return client.grpcClient.AssignMapTask(ctx, &proto.AssignMapTaskRequest{
 			TaskID:   uint64(task.ID),
 			Script:   task.Script,
 			FileID:   uint64(task.FileID),
 			FilePath: task.FilePath,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("sending AssignMapTask request: %w", err)
+	}
+	return nil
+}
+
+func (client *WorkerClient) AssignReduceTask(ctx context.Context, task contracts.ReduceTask) error {
+	files := make([]*proto.File, 0, len(task.Files))
+	for _, file := range task.Files {
+		files = append(files, &proto.File{FileID: file.FileID, SizeBytes: file.SizeBytes, Path: file.Path})
+	}
+	_, err := withReconnect(client.conn, func() (*proto.AssignReduceTaskReply, error) {
+		return client.grpcClient.AssignReduceTask(ctx, &proto.AssignReduceTaskRequest{
+			TaskID: uint64(task.ID),
+			Script: task.Script,
+			Files:  files,
 		})
 	})
 	if err != nil {

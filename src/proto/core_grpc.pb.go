@@ -144,7 +144,8 @@ var Master_ServiceDesc = grpc.ServiceDesc{
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type WorkerClient interface {
-	AssignTask(ctx context.Context, in *AssignTaskRequest, opts ...grpc.CallOption) (*AssignTaskRequestReply, error)
+	AssignMapTask(ctx context.Context, in *AssignMapTaskRequest, opts ...grpc.CallOption) (*AssignMapTaskReply, error)
+	AssignReduceTask(ctx context.Context, in *AssignReduceTaskRequest, opts ...grpc.CallOption) (*AssignReduceTaskReply, error)
 }
 
 type workerClient struct {
@@ -155,9 +156,18 @@ func NewWorkerClient(cc grpc.ClientConnInterface) WorkerClient {
 	return &workerClient{cc}
 }
 
-func (c *workerClient) AssignTask(ctx context.Context, in *AssignTaskRequest, opts ...grpc.CallOption) (*AssignTaskRequestReply, error) {
-	out := new(AssignTaskRequestReply)
-	err := c.cc.Invoke(ctx, "/core.Worker/AssignTask", in, out, opts...)
+func (c *workerClient) AssignMapTask(ctx context.Context, in *AssignMapTaskRequest, opts ...grpc.CallOption) (*AssignMapTaskReply, error) {
+	out := new(AssignMapTaskReply)
+	err := c.cc.Invoke(ctx, "/core.Worker/AssignMapTask", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) AssignReduceTask(ctx context.Context, in *AssignReduceTaskRequest, opts ...grpc.CallOption) (*AssignReduceTaskReply, error) {
+	out := new(AssignReduceTaskReply)
+	err := c.cc.Invoke(ctx, "/core.Worker/AssignReduceTask", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +178,8 @@ func (c *workerClient) AssignTask(ctx context.Context, in *AssignTaskRequest, op
 // All implementations must embed UnimplementedWorkerServer
 // for forward compatibility
 type WorkerServer interface {
-	AssignTask(context.Context, *AssignTaskRequest) (*AssignTaskRequestReply, error)
+	AssignMapTask(context.Context, *AssignMapTaskRequest) (*AssignMapTaskReply, error)
+	AssignReduceTask(context.Context, *AssignReduceTaskRequest) (*AssignReduceTaskReply, error)
 	mustEmbedUnimplementedWorkerServer()
 }
 
@@ -176,8 +187,11 @@ type WorkerServer interface {
 type UnimplementedWorkerServer struct {
 }
 
-func (UnimplementedWorkerServer) AssignTask(context.Context, *AssignTaskRequest) (*AssignTaskRequestReply, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AssignTask not implemented")
+func (UnimplementedWorkerServer) AssignMapTask(context.Context, *AssignMapTaskRequest) (*AssignMapTaskReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AssignMapTask not implemented")
+}
+func (UnimplementedWorkerServer) AssignReduceTask(context.Context, *AssignReduceTaskRequest) (*AssignReduceTaskReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AssignReduceTask not implemented")
 }
 func (UnimplementedWorkerServer) mustEmbedUnimplementedWorkerServer() {}
 
@@ -192,20 +206,38 @@ func RegisterWorkerServer(s grpc.ServiceRegistrar, srv WorkerServer) {
 	s.RegisterService(&Worker_ServiceDesc, srv)
 }
 
-func _Worker_AssignTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AssignTaskRequest)
+func _Worker_AssignMapTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignMapTaskRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(WorkerServer).AssignTask(ctx, in)
+		return srv.(WorkerServer).AssignMapTask(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/core.Worker/AssignTask",
+		FullMethod: "/core.Worker/AssignMapTask",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkerServer).AssignTask(ctx, req.(*AssignTaskRequest))
+		return srv.(WorkerServer).AssignMapTask(ctx, req.(*AssignMapTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_AssignReduceTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignReduceTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).AssignReduceTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/core.Worker/AssignReduceTask",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).AssignReduceTask(ctx, req.(*AssignReduceTaskRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -218,8 +250,12 @@ var Worker_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*WorkerServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "AssignTask",
-			Handler:    _Worker_AssignTask_Handler,
+			MethodName: "AssignMapTask",
+			Handler:    _Worker_AssignMapTask_Handler,
+		},
+		{
+			MethodName: "AssignReduceTask",
+			Handler:    _Worker_AssignReduceTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

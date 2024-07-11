@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -59,74 +58,7 @@ func Test_OnMessage_CleanFailedWorkersMessage(t *testing.T) {
 func Test_OnMessage_NewTaskMessage(t *testing.T) {
 	t.Parallel()
 
-	clock := clock.NewMock()
-
-	inputFile := newTempInputFile(t, 1)
-	defer inputFile.Close()
-
-	m, err := New(Config{
-		NumberOfMapWorkers:         10,
-		WorkspaceFolder:            filepath.Dir(inputFile.Name()),
-		MaxWorkerHeartbeatInterval: 10 * time.Millisecond,
-	},
-		partitioning.NewLinePartitioner(),
-		clock,
-	)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	input, err := NewValidatedInput(contracts.Input{
-		File:                inputFile.Name(),
-		NumberOfMapTasks:    3,
-		NumberOfReduceTasks: 3,
-		NumberOfPartitions:  3,
-		RequestsMemory:      100 * memory.Mib,
-	})
-	require.NoError(t, err)
-
-	// Theres a new task but no workers available.
-	_, err = m.OnMessage(ctx, &NewTaskMessage{Input: input})
-	assert.ErrorIs(t, err, ErrNoWorkerAvailable)
-
-	// Master receives a heartbeat and registers the worker.
-	// There's 1 worker available now.
-	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerAddr: "127.0.0.1:8080"})
-	require.NoError(t, err)
-	assert.Empty(t, out)
-
-	// There's a worker available so the task should be assigned to it.
-	out, err = m.OnMessage(ctx, &NewTaskMessage{Input: input})
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, len(out))
-	assert.Equal(t, "127.0.0.1:8080", out[0].WorkerAddr)
-	inProgressTask := out[0]
-
-	// If a new task comes in, it can't be assigned to the worker
-	// because the worker is busy.
-	out, err = m.OnMessage(ctx, &NewTaskMessage{Input: input})
-	assert.ErrorIs(t, err, ErrNoWorkerAvailable)
-	assert.Empty(t, out)
-
-	// The worker is done processing the file assigned to it.
-	out, err = m.OnMessage(ctx, &MapTasksCompletedMessage{
-		WorkerAddr: "127.0.0.1:8080",
-		Tasks: []contracts.CompletedTask{
-			{
-				TaskID: inProgressTask.Task.ID,
-				OutputFiles: []contracts.OutputFile{
-					{
-						FileID:    inProgressTask.Task.FileID,
-						FilePath:  "todo",
-						SizeBytes: 10,
-					}},
-			},
-		},
-	},
-	)
-	require.NoError(t, err)
-	assert.Empty(t, out)
+	panic("TODO")
 }
 
 func TestCleanUpFailedWorkers(t *testing.T) {
@@ -169,7 +101,7 @@ func TestCleanUpFailedWorkers(t *testing.T) {
 	assert.Empty(t, m.workers)
 }
 
-func TestTryAssignTasks(t *testing.T) {
+func TestTryAssignMapTasks(t *testing.T) {
 	t.Parallel()
 
 	m, err := New(Config{
@@ -204,7 +136,7 @@ func TestTryAssignTasks(t *testing.T) {
 	assert.Empty(t, out)
 
 	fmt.Printf("\n\naaaaaaa m.workers %+v\n\n", m.workers)
-	// assignment, err := m.tryAssignTask(&task{id: 1, files: map[contracts.FileID]pendingFile{
+	// assignment, err := m.tryAssignMapTask(&task{id: 1, files: map[contracts.FileID]pendingFile{
 	// 	1: {fileID: 1},
 	// 	2: {fileID: 2},
 	// 	3: {fileID: 3}},

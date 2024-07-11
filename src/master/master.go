@@ -42,15 +42,6 @@ func (CleanFailedWorkersMessage) inputMessage() string {
 	return "CleanFailedWorkersMessage"
 }
 
-type MapTasksCompletedMessage struct {
-	WorkerAddr contracts.WorkerAddr
-	Tasks      []contracts.CompletedTask
-}
-
-func (MapTasksCompletedMessage) inputMessage() string {
-	return "MapTasksCompletedMessage"
-}
-
 type OutputMessage interface {
 	outputMessage() string
 }
@@ -113,12 +104,18 @@ func (f *pendingFile) isAssignedToWorker() bool {
 	return f.workerAddr != ""
 }
 
-type Assignment struct {
-	TaskType contracts.TaskType
+type MapTaskAssignment struct {
 	// The worker that should receive the task.
 	WorkerAddr string
 	// The task that should be given to the worker.
-	Task contracts.Task
+	Task contracts.MapTask
+}
+
+type ReduceTaskAssignment struct {
+	// The worker that should receive the task.
+	WorkerAddr string
+	// The task that should be given to the worker.
+	Task contracts.ReduceTask
 }
 
 func New(config Config, partitioner partitioning.Partitioner, clock contracts.Clock) (*Master, error) {
@@ -184,7 +181,7 @@ func validateInput(input *contracts.Input) (ValidatedInput, error) {
 	return ValidatedInput{value: input}, nil
 }
 
-func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]Assignment, error) {
+func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]MapTaskAssignment, error) {
 	master.mu.Lock()
 	defer master.mu.Unlock()
 
@@ -203,13 +200,6 @@ func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]Assign
 			return assignments, fmt.Errorf("handling NewTaskMessage: %w", err)
 		}
 
-		return assignments, nil
-
-	case *MapTasksCompletedMessage:
-		assignments, err := master.onMapTasksCompletedReceived(msg.WorkerAddr, msg.Tasks)
-		if err != nil {
-			return nil, fmt.Errorf("handling MapTasksCompletedMessage: %w", err)
-		}
 		return assignments, nil
 
 	default:
@@ -235,7 +225,7 @@ func (master *Master) onHeartbeatReceived(msg *HeartbeatMessage) error {
 }
 
 // Called when a new task is received. New tasks are sent by clients.
-func (master *Master) onNewTask(input ValidatedInput) ([]Assignment, error) {
+func (master *Master) onNewTask(input ValidatedInput) ([]MapTaskAssignment, error) {
 	partitionFilePaths, err := master.partitioner.Partition(
 		input.value.File,
 		master.Config.WorkspaceFolder,
@@ -257,7 +247,7 @@ func (master *Master) onNewTask(input ValidatedInput) ([]Assignment, error) {
 		outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
 	}
 
-	assignment, err := master.tryAssignTask(task)
+	assignment, err := master.tryAssignMapTask(task)
 	if err != nil {
 		if errors.Is(err, ErrNoWorkerAvailable) {
 			tracing.Info(context.Background(), "no workers available", "task", task.id, "requests", input.value.RequestsMemory)
@@ -268,10 +258,10 @@ func (master *Master) onNewTask(input ValidatedInput) ([]Assignment, error) {
 
 	master.tasks[task.id] = task
 
-	return []Assignment{*assignment}, nil
+	return []MapTaskAssignment{*assignment}, nil
 }
 
-func (master *Master) onMapTasksCompletedReceived(workerAddr contracts.WorkerAddr, tasks []contracts.CompletedTask) ([]Assignment, error) {
+func (master *Master) OnMapTasksCompletedReceived(workerAddr contracts.WorkerAddr, tasks []contracts.CompletedTask) ([]ReduceTaskAssignment, error) {
 	for _, completedTask := range tasks {
 		task, ok := master.tasks[completedTask.TaskID]
 		if !ok {
@@ -315,7 +305,7 @@ func (master *Master) onMapTasksCompletedReceived(workerAddr contracts.WorkerAdd
 
 	for _, task := range master.tasks {
 		if !task.IsCompleted() {
-			assignment, err := master.tryAssignTask(task)
+			assignment, err := master.tryAssignReduceTask(task)
 			if err != nil {
 				if errors.Is(err, ErrNoWorkerAvailable) {
 					return nil, nil
@@ -323,7 +313,7 @@ func (master *Master) onMapTasksCompletedReceived(workerAddr contracts.WorkerAdd
 				return nil, fmt.Errorf("trying to assign task to a worker: %w", err)
 			}
 
-			return []Assignment{*assignment}, nil
+			return []ReduceTaskAssignment{*assignment}, nil
 		}
 	}
 
@@ -340,7 +330,7 @@ func partitionFilePathsToPendingFiles(partitionFilePaths []string) map[contracts
 }
 
 // Assigns pending tasks to idle workers.
-func (master *Master) tryAssignTask(task *task) (*Assignment, error) {
+func (master *Master) tryAssignMapTask(task *task) (*MapTaskAssignment, error) {
 	// Try to find a file that's not assigned to a worker.
 	for _, pendingFile := range task.files {
 		if pendingFile.isAssignedToWorker() {
@@ -352,9 +342,8 @@ func (master *Master) tryAssignTask(task *task) (*Assignment, error) {
 			return nil, ErrNoWorkerAvailable
 		}
 
-		mapTask := contracts.Task{
+		mapTask := contracts.MapTask{
 			ID:       task.id,
-			TaskType: task.taskType,
 			Script:   task.script,
 			FileID:   pendingFile.fileID,
 			FilePath: pendingFile.filePath,
@@ -365,11 +354,20 @@ func (master *Master) tryAssignTask(task *task) (*Assignment, error) {
 		task.files[pendingFile.fileID] = pendingFile
 		worker.memoryInUse += task.requestsMemory
 
-		return &Assignment{
+		return &MapTaskAssignment{
 			WorkerAddr: worker.addr,
 			Task:       mapTask,
 		}, nil
 	}
+
+	return nil, nil
+}
+
+func (master *Master) tryAssignReduceTask(task *task) (*ReduceTaskAssignment, error) {
+
+	// TODO:
+	// find map files that belong to a region N
+	// send those files to worker
 
 	return nil, nil
 }

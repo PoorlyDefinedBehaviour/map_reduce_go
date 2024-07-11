@@ -16,7 +16,7 @@ import (
 type MasterServer struct {
 	proto.UnimplementedMasterServer
 	config MasterServerConfig
-	master *io.IOHandler
+	master *io.MasterIOHandler
 }
 
 type MasterServerConfig struct {
@@ -24,7 +24,7 @@ type MasterServerConfig struct {
 	Port uint16
 }
 
-func NewMasterServer(config MasterServerConfig, master *io.IOHandler) *MasterServer {
+func NewMasterServer(config MasterServerConfig, master *io.MasterIOHandler) *MasterServer {
 	return &MasterServer{config: config, master: master}
 }
 
@@ -81,10 +81,7 @@ func (s *MasterServer) MapTasksCompleted(ctx context.Context, in *proto.MapTasks
 		tasks = append(tasks, task)
 	}
 
-	if err := s.master.OnMessage(ctx, &master.MapTasksCompletedMessage{
-		WorkerAddr: in.WorkerAddr,
-		Tasks:      tasks,
-	}); err != nil {
+	if err := s.master.OnMapTasksCompletedReceived(in.WorkerAddr, tasks); err != nil {
 		return &proto.MapTasksCompletedReply{}, fmt.Errorf("handling MapTasksCompletedRequest: %w", err)
 	}
 

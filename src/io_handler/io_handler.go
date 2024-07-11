@@ -11,15 +11,15 @@ import (
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/master"
 )
 
-type IOHandler struct {
+type MasterIOHandler struct {
 	master  *master.Master
 	mu      *sync.Mutex
 	clock   contracts.Clock
 	clients map[contracts.WorkerAddr]contracts.WorkerClient
 }
 
-func NewIOHandler(ctx context.Context, master *master.Master, clock contracts.Clock) *IOHandler {
-	handler := &IOHandler{
+func NewMasterIOHandler(ctx context.Context, master *master.Master, clock contracts.Clock) *MasterIOHandler {
+	handler := &MasterIOHandler{
 		master:  master,
 		mu:      &sync.Mutex{},
 		clock:   clock,
@@ -29,7 +29,7 @@ func NewIOHandler(ctx context.Context, master *master.Master, clock contracts.Cl
 	return handler
 }
 
-func (handler *IOHandler) controlLoop(ctx context.Context) {
+func (handler *MasterIOHandler) controlLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -53,7 +53,7 @@ func (handler *IOHandler) controlLoop(ctx context.Context) {
 	}
 }
 
-func (handler *IOHandler) getOrCreateClient(workerAddr contracts.WorkerAddr) (contracts.WorkerClient, error) {
+func (handler *MasterIOHandler) getOrCreateClient(workerAddr contracts.WorkerAddr) (contracts.WorkerClient, error) {
 	// TODO: remove failed workers
 	client, ok := handler.clients[workerAddr]
 	if ok {
@@ -70,7 +70,7 @@ func (handler *IOHandler) getOrCreateClient(workerAddr contracts.WorkerAddr) (co
 	return client, nil
 }
 
-func (handler *IOHandler) ExecuteTask(ctx context.Context, input master.ValidatedInput) ([]byte, error) {
+func (handler *MasterIOHandler) ExecuteTask(ctx context.Context, input master.ValidatedInput) ([]byte, error) {
 	if err := handler.OnMessage(ctx, &master.NewTaskMessage{Input: input}); err != nil {
 		return nil, fmt.Errorf("handling new task: %w", err)
 	}
@@ -78,7 +78,30 @@ func (handler *IOHandler) ExecuteTask(ctx context.Context, input master.Validate
 	return []byte("map task assigned"), nil
 }
 
-func (handler *IOHandler) OnMessage(ctx context.Context, msg master.InputMessage) error {
+func (handler *MasterIOHandler) OnMapTasksCompletedReceived(workerAddr contracts.WorkerAddr, tasks []contracts.CompletedTask) error {
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+
+	assignments, err := handler.master.OnMapTasksCompletedReceived(workerAddr, tasks)
+	if err != nil {
+		return fmt.Errorf("handling map tasks completed message: %w", err)
+	}
+
+	for _, assignment := range assignments {
+		client, err := handler.getOrCreateClient(assignment.WorkerAddr)
+		if err != nil {
+			return fmt.Errorf("getting worker client: %w", err)
+		}
+
+		if err := client.AssignReduceTask(context.Background(), assignment.Task); err != nil {
+			return fmt.Errorf("assigning map task to worker: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (handler *MasterIOHandler) OnMessage(ctx context.Context, msg master.InputMessage) error {
 	handler.mu.Lock()
 	defer handler.mu.Unlock()
 
@@ -93,7 +116,7 @@ func (handler *IOHandler) OnMessage(ctx context.Context, msg master.InputMessage
 			return fmt.Errorf("getting worker client: %w", err)
 		}
 
-		if err := client.AssignTask(ctx, assignment.Task); err != nil {
+		if err := client.AssignMapTask(ctx, assignment.Task); err != nil {
 			return fmt.Errorf("assigning map task to worker: %w", err)
 		}
 	}

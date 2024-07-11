@@ -19,9 +19,9 @@ message HeartbeatReply {
 }
 
 message File {
-  string path = 1;
-  uint64 fileID = 2;
-  uint64 sizeBytes = 3;
+  uint64 fileID = 1;
+  uint64 sizeBytes = 2;
+  string path = 3;
 }
 
 message Task {
@@ -39,18 +39,28 @@ message MapTasksCompletedReply {
 }
 
 service Worker {
-  rpc AssignTask(AssignTaskRequest) returns (AssignTaskRequestReply) {}
+  rpc AssignMapTask(AssignMapTaskRequest) returns (AssignMapTaskReply) {}
+  rpc AssignReduceTask(AssignReduceTaskRequest) returns (AssignReduceTaskReply) {}
 }
 
-message AssignTaskRequest {
+message AssignMapTaskRequest {
   uint64 taskID = 1;
   uint64 fileID = 2;
   string filePath = 3;
   string script = 4;
-  uint32 taskType = 5;
+  uint32 numberOfReduceTasks = 5;
 }
 
-message AssignTaskRequestReply {
+message AssignMapTaskReply {
 
 }
 
+message AssignReduceTaskRequest {
+  uint64 taskID = 1;
+  repeated File files = 2;
+  string script = 3;
+}
+
+message AssignReduceTaskReply {
+
+}
