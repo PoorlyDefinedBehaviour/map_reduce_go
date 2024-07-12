@@ -34,7 +34,7 @@ type ReduceTask struct {
 }
 
 type File struct {
-	FileID    uint64
+	FileID    FileID
 	SizeBytes uint64
 	Path      string
 }

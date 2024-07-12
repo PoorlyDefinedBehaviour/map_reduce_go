@@ -70,7 +70,7 @@ func (s *WorkerServer) AssignReduceTask(ctx context.Context, in *proto.AssignRed
 		}
 		for _, file := range in.Files {
 			task.Files = append(task.Files, contracts.File{
-				FileID:    file.FileID,
+				FileID:    contracts.FileID(file.FileID),
 				SizeBytes: file.SizeBytes,
 				Path:      file.Path,
 			})

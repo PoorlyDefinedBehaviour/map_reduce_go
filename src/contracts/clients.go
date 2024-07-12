@@ -1,6 +1,11 @@
 package contracts
 
-import "context"
+import (
+	"context"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
 
 type CompletedTask struct {
 	TaskID      TaskID
@@ -11,6 +16,17 @@ type OutputFile struct {
 	FileID    FileID
 	FilePath  string
 	SizeBytes uint64
+}
+
+// Returns the region the file belongs to. Regions are set in the Map phase.
+func (f *OutputFile) Region() uint32 {
+	name := filepath.Base(f.FilePath)
+	_, region, _ := strings.Cut(name, "_")
+	n, err := strconv.ParseInt(region, 10, 32)
+	if err != nil {
+		panic(err)
+	}
+	return uint32(n)
 }
 
 type MasterClient interface {

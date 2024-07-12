@@ -1,4 +1,4 @@
-package partitioning
+package contracts
 
 // Partitioner partitions an input file into several files of the specified size.
 type Partitioner interface {

@@ -20,7 +20,6 @@ type FlushOnCloseFile struct {
 }
 
 type inner struct {
-	file        *os.File
 	folder      string
 	files       map[uint32]*os.File
 	outputFiles []contracts.StorageFileInfo

@@ -52,7 +52,7 @@ func (client *WorkerClient) AssignMapTask(ctx context.Context, task contracts.Ma
 func (client *WorkerClient) AssignReduceTask(ctx context.Context, task contracts.ReduceTask) error {
 	files := make([]*proto.File, 0, len(task.Files))
 	for _, file := range task.Files {
-		files = append(files, &proto.File{FileID: file.FileID, SizeBytes: file.SizeBytes, Path: file.Path})
+		files = append(files, &proto.File{FileID: uint64(file.FileID), SizeBytes: file.SizeBytes, Path: file.Path})
 	}
 	_, err := withReconnect(client.conn, func() (*proto.AssignReduceTaskReply, error) {
 		return client.grpcClient.AssignReduceTask(ctx, &proto.AssignReduceTaskRequest{

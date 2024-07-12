@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
-	"github.com/poorlydefinedbehaviour/map_reduce_go/src/partitioning"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
 )
 
@@ -54,7 +53,7 @@ type Master struct {
 	tasks map[contracts.TaskID]*task
 	// The workers available.
 	workers     map[contracts.WorkerAddr]*worker
-	partitioner partitioning.Partitioner
+	partitioner contracts.Partitioner
 	clock       contracts.Clock
 }
 
@@ -80,7 +79,8 @@ type task struct {
 	requestsMemory uint64
 	taskType       contracts.TaskType
 	// The script that the worker should execute.
-	script string
+	script   string
+	assigned bool
 
 	files       map[contracts.FileID]pendingFile
 	outputFiles map[contracts.FileID]contracts.OutputFile
@@ -118,7 +118,7 @@ type ReduceTaskAssignment struct {
 	Task contracts.ReduceTask
 }
 
-func New(config Config, partitioner partitioning.Partitioner, clock contracts.Clock) (*Master, error) {
+func New(config Config, partitioner contracts.Partitioner, clock contracts.Clock) (*Master, error) {
 	if config.NumberOfMapWorkers == 0 {
 		return nil, fmt.Errorf("number of map workers must be greater than 0")
 	}
@@ -278,33 +278,40 @@ func (master *Master) OnMapTasksCompletedReceived(workerAddr contracts.WorkerAdd
 			}
 			delete(task.files, outputFile.FileID)
 			task.outputFiles[outputFile.FileID] = outputFile
-
 		}
 	}
 
 	for _, t := range master.tasks {
 		if t.IsCompleted() && t.taskType == contracts.TaskTypeMap {
-			files := make(map[contracts.FileID]pendingFile)
+			filesByRegion := make(map[uint32]map[contracts.FileID]pendingFile)
+
 			for _, file := range t.outputFiles {
-				files[file.FileID] = pendingFile{
+				region := file.Region()
+				if _, ok := filesByRegion[region]; !ok {
+					filesByRegion[region] = make(map[contracts.FileID]pendingFile)
+				}
+				filesByRegion[region][file.FileID] = pendingFile{
 					fileID:    file.FileID,
 					filePath:  file.FilePath,
 					sizeBytes: file.SizeBytes,
 				}
 			}
-			master.tasks[t.id] = &task{
-				id:             t.id,
-				requestsMemory: t.requestsMemory,
-				taskType:       contracts.TaskTypeReduce,
-				script:         t.script,
-				files:          files,
-				outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
+
+			for _, files := range filesByRegion {
+				master.tasks[t.id] = &task{
+					id:             master.getNextTaskID(),
+					requestsMemory: t.requestsMemory,
+					taskType:       contracts.TaskTypeReduce,
+					script:         t.script,
+					files:          files,
+					outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
+				}
 			}
 		}
 	}
 
 	for _, task := range master.tasks {
-		if !task.IsCompleted() {
+		if !task.IsCompleted() && task.taskType == contracts.TaskTypeReduce {
 			assignment, err := master.tryAssignReduceTask(task)
 			if err != nil {
 				if errors.Is(err, ErrNoWorkerAvailable) {
@@ -364,12 +371,34 @@ func (master *Master) tryAssignMapTask(task *task) (*MapTaskAssignment, error) {
 }
 
 func (master *Master) tryAssignReduceTask(task *task) (*ReduceTaskAssignment, error) {
+	worker := master.findWorker(task.requestsMemory)
+	if worker == nil {
+		return nil, ErrNoWorkerAvailable
+	}
 
-	// TODO:
-	// find map files that belong to a region N
-	// send those files to worker
+	files := make([]contracts.File, 0, len(task.files))
+	for _, file := range task.files {
+		files = append(files, contracts.File{
+			FileID:    file.fileID,
+			SizeBytes: file.sizeBytes,
+			Path:      file.filePath,
+		})
+	}
 
-	return nil, nil
+	reduceTask := contracts.ReduceTask{
+		ID:     task.id,
+		Script: task.script,
+		Files:  files,
+	}
+
+	task.assigned = true
+
+	worker.memoryInUse += task.requestsMemory
+
+	return &ReduceTaskAssignment{
+		WorkerAddr: worker.addr,
+		Task:       reduceTask,
+	}, nil
 }
 
 func (master *Master) findWorker(memoryRequest uint64) *worker {
