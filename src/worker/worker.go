@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,11 +10,13 @@ import (
 	"math"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/interpreters/javascript"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/iterator"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
 	"golang.org/x/sync/errgroup"
 )
@@ -25,6 +28,7 @@ type Worker struct {
 	fileStorage  contracts.FileStorage
 	clock        contracts.Clock
 	partitioner  contracts.Partitioner
+	sorter       contracts.Sorter
 }
 
 type Config struct {
@@ -53,7 +57,8 @@ func New(
 	masterClient contracts.MasterClient,
 	fileStorage contracts.FileStorage,
 	clock contracts.Clock,
-	partitioner contracts.Partitioner) (*Worker, error) {
+	partitioner contracts.Partitioner,
+	sorter contracts.Sorter) (*Worker, error) {
 	if config.Addr == "" {
 		return nil, fmt.Errorf("addr is required")
 	}
@@ -84,6 +89,8 @@ func New(
 		masterClient: masterClient,
 		fileStorage:  fileStorage,
 		clock:        clock,
+		partitioner:  partitioner,
+		sorter:       sorter,
 	}, nil
 }
 
@@ -105,14 +112,14 @@ func (worker *Worker) HeartbeatControlLoop(ctx context.Context) {
 func (worker *Worker) OnReduceTaskReceived(ctx context.Context, task contracts.ReduceTask) error {
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
-	// TODO: check if a mutex wil be needed
 
 	// The folder where the input files will be downloaded to.
 	folder := path.Join(worker.config.WorkspaceFolder, fmt.Sprint(task.ID), "reduce")
-	// TODO: master must send the location of all the files belonging to the partition this
-	// worker is responsible for.
-	// worker must external sort the files
-	// worker passes the sorted files to the user provided reduce function
+	unsortedFolder := path.Join(folder, "unsorted")
+	if err := os.MkdirAll(unsortedFolder, 0755); err != nil {
+		return fmt.Errorf("creating directory to store unsorted reduce input files: %w", err)
+	}
+
 	var wg errgroup.Group
 	wg.SetLimit(int(worker.config.MaxInflightFileDownloads))
 	downloadedFiles := make([]contracts.File, len(task.Files))
@@ -121,7 +128,7 @@ func (worker *Worker) OnReduceTaskReceived(ctx context.Context, task contracts.R
 		i := i
 		file := file
 		wg.Go(func() error {
-			file, err := worker.downloadFile(ctx, folder, file)
+			file, err := worker.downloadFile(ctx, unsortedFolder, file)
 			if err != nil {
 				return fmt.Errorf("downloading file: path=%s %w", file.Path, err)
 			}
@@ -135,24 +142,29 @@ func (worker *Worker) OnReduceTaskReceived(ctx context.Context, task contracts.R
 		return fmt.Errorf("downloading reduce task files: %w", err)
 	}
 
-	filePaths, err := worker.splitFiles(folder, downloadedFiles)
+	sortedFolder := path.Join(folder, "sorted")
+	if err := os.MkdirAll(sortedFolder, 0755); err != nil {
+		return fmt.Errorf("creating directory to store sorted reduce input files: %w", err)
+	}
+
+	filePaths, err := worker.splitFiles(sortedFolder, downloadedFiles)
 	if err != nil {
 		return fmt.Errorf("splitting files: %w", err)
 	}
 
-	if err := worker.sortReduceInputFiles(folder, filePaths); err != nil {
+	if err := worker.sortReduceInputFiles(filePaths); err != nil {
 		return fmt.Errorf("soring reduce input files: %w", err)
 	}
 
 	return nil
 }
-
 func (worker *Worker) downloadFile(ctx context.Context, folder string, file contracts.File) (newFile contracts.File, err error) {
-	downloadedFilePath := path.Join(folder, "unsorted", fmt.Sprintf("input_%d", file.FileID))
+	downloadedFilePath := path.Join(folder, fmt.Sprintf("input_%d", file.FileID))
 	f, err := os.OpenFile(downloadedFilePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return newFile, fmt.Errorf("creating/opening file: path=%s %w", file.Path, err)
 	}
+
 	defer func() {
 		if syncErr := f.Sync(); syncErr != nil {
 			err = errors.Join(err, fmt.Errorf("syncing file: %w", syncErr))
@@ -188,12 +200,16 @@ func (worker *Worker) downloadFile(ctx context.Context, folder string, file cont
 	return newFile, nil
 }
 
-func (worker *Worker) sortReduceInputFiles(folder string, filePaths []string) error {
+func (worker *Worker) sortReduceInputFiles(filePaths []string) error {
 	wg := errgroup.Group{}
 
+	files := make([]*os.File, 0, len(filePaths))
+
+	// Sort every file by themselves.
 	for _, filePath := range filePaths {
 		filePath := filePath
 		wg.Go(func() (err error) {
+
 			file, err := os.Open(filePath)
 			if err != nil {
 				return fmt.Errorf("opening file: path=%s %w", filePath, err)
@@ -204,19 +220,17 @@ func (worker *Worker) sortReduceInputFiles(folder string, filePaths []string) er
 				}
 			}()
 
-			reader, err := worker.Sorter(file)
+			reader, err := worker.sorter.Sort(file)
 			if err != nil {
 				return fmt.Errorf("sorting file: %w", err)
 			}
 
-			sortedFile, err := os.OpenFile("todo", os.O_RDWR|os.O_CREATE, 0644)
+			sortedFile, err := os.OpenFile(filepath.Join(filepath.Dir(filePath), fmt.Sprintf("sorted_temp_%s", filepath.Base(file.Name()))), os.O_RDWR|os.O_CREATE, 0644)
 			if err != nil {
 				return fmt.Errorf("creating sorted file: %w", err)
 			}
+
 			defer func() {
-				if syncErr := sortedFile.Sync(); syncErr != nil {
-					err = errors.Join(err, fmt.Errorf("syncing file: %w", syncErr))
-				}
 				if closeErr := sortedFile.Close(); closeErr != nil {
 					err = errors.Join(err, fmt.Errorf("closing file: %w", closeErr))
 				}
@@ -226,9 +240,93 @@ func (worker *Worker) sortReduceInputFiles(folder string, filePaths []string) er
 				return fmt.Errorf("writing sorted data to file: %w", err)
 			}
 
+			if err := sortedFile.Sync(); err != nil {
+				return fmt.Errorf("syncing file: %w", err)
+			}
+
+			if err := os.Rename(sortedFile.Name(), file.Name()); err != nil {
+				return fmt.Errorf("renaming sorted file: %w", err)
+			}
+
+			files = append(files, sortedFile)
+
 			return nil
 		})
 	}
+
+	// Merge sorted files.
+	for i := 0; i < len(files); i += 2 {
+		a := files[i]
+		b := files[i+1]
+
+		sortedFile, err := os.OpenFile(filepath.Join(filepath.Dir(a.Name()), fmt.Sprintf("sorted_temp_%s", filepath.Base(a.Name()))), os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			return fmt.Errorf("creating sorted file: %w", err)
+		}
+
+		defer func() {
+			if closeErr := sortedFile.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("closing file: %w", closeErr))
+			}
+		}()
+
+		iterA := iterator.NewLineIterator(a)
+		iterB := iterator.NewLineIterator(b)
+
+		for {
+			nextA, doneA := iterA.Peek()
+			if err != nil {
+				return fmt.Errorf("iterating file: path=%s %w", a.Name(), err)
+			}
+
+			nextB, doneB := iterB.Peek()
+			if err != nil {
+				return fmt.Errorf("iterating file: path=%s %w", b.Name(), err)
+			}
+
+			var value []byte
+
+			if !doneA && !doneB {
+				if bytes.Compare(nextA, nextB) == -1 {
+					_, _ = iterA.Next()
+					value = nextA
+				} else {
+					_, _ = iterB.Next()
+					value = nextB
+				}
+			} else if !doneA {
+				_, _ = iterA.Next()
+				value = nextA
+			} else if !doneB {
+				_, _ = iterB.Next()
+				value = nextB
+			} else {
+				break
+			}
+
+			if _, err := sortedFile.Write(value); err != nil {
+				return fmt.Errorf("writing to sorted file: %w", err)
+			}
+			if _, err := sortedFile.Write([]byte("\n")); err != nil {
+				return fmt.Errorf("writing to \n sorted file: %w", err)
+			}
+		}
+
+		if err := sortedFile.Sync(); err != nil {
+			return fmt.Errorf("syncing file: %w", err)
+		}
+
+		if err := os.Rename(sortedFile.Name(), a.Name()); err != nil {
+			return fmt.Errorf("renaming sorted file: %w", err)
+		}
+
+		if err := os.Remove(b.Name()); err != nil {
+			return fmt.Errorf("removing file: path=%s %w", b.Name(), err)
+		}
+
+	}
+
+	// TODO: handle odd number of files
 
 	return nil
 }
@@ -237,17 +335,18 @@ func (worker *Worker) splitFiles(folder string, files []contracts.File) ([]strin
 	filePaths := make([]string, 0, len(files))
 
 	for _, file := range files {
-		if file.SizeBytes < worker.config.ExternalSortMaxMemoryBytes {
-			filePaths = append(filePaths, file.Path)
-		} else {
-			// How many files the file will be broken into.
-			splits := uint32(math.Ceil(float64(file.SizeBytes) / float64(worker.config.ExternalSortMaxMemoryBytes)))
-			newFilePaths, err := worker.partitioner.Partition(file.Path, folder, splits)
-			if err != nil {
-				return nil, fmt.Errorf("splitting file: %w", err)
-			}
-			filePaths = append(filePaths, newFilePaths...)
+		// How many files the file will be broken into.
+		splits := uint32(math.Ceil(float64(file.SizeBytes) / float64(worker.config.ExternalSortMaxMemoryBytes)))
+
+		filePartitionsFolder := filepath.Join(folder, fmt.Sprint(file.FileID))
+		if err := os.MkdirAll(filePartitionsFolder, 0755); err != nil {
+			return nil, fmt.Errorf("creating folder for partitioned files: %w", err)
 		}
+		newFilePaths, err := worker.partitioner.Partition(file.Path, filePartitionsFolder, splits)
+		if err != nil {
+			return nil, fmt.Errorf("splitting file: %w", err)
+		}
+		filePaths = append(filePaths, newFilePaths...)
 	}
 
 	return filePaths, nil
@@ -256,7 +355,6 @@ func (worker *Worker) splitFiles(folder string, files []contracts.File) ([]strin
 func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapTask) error {
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
-	fmt.Printf("\n\naaaaaaa OnMapTaskReceived id=%+v path=%+v\n\n", task.FileID, task.FilePath)
 	if task.ID == 0 {
 		return fmt.Errorf("map task id is required")
 	}
@@ -296,7 +394,6 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapT
 	defer writer.Close()
 
 	if err := jsScript.Map(task.FilePath, string(contents), func(key, value string) error {
-		fmt.Printf("\n\naaaaaaa Worker.OnMapTaskReceived emit called with: key %+v value %+v\n\n", key, value)
 
 		region, err := jsScript.Partition(key, task.NumberOfReduceTasks)
 		if err != nil {

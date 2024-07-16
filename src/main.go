@@ -10,6 +10,7 @@ import (
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/filestorage"
 	grpcclient "github.com/poorlydefinedbehaviour/map_reduce_go/src/grpc/clients"
 	io "github.com/poorlydefinedbehaviour/map_reduce_go/src/io_handler"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/sorter"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/grpc"
@@ -27,6 +28,7 @@ func main() {
 
 	ctx := context.Background()
 	clock := clock.New()
+	partitioner := partitioning.NewLinePartitioner()
 
 	if cfg.IsWorker() {
 		tracing.Info(ctx, "starting worker")
@@ -46,7 +48,7 @@ func main() {
 			HeartbeatTimeout:         cfg.WorkerHeartbeatTimeout,
 			MapTasksCompletedTimeout: cfg.WorkerMapTasksCompletedTimeout,
 			MemoryAvailable:          cfg.WorkerMemoryAvailable,
-		}, masterClient, fileStorage, clock)
+		}, masterClient, fileStorage, clock, partitioner, sorter.NewLineSorter())
 		if err != nil {
 			panic(fmt.Errorf("instantiating worker: %w", err))
 		}
@@ -58,7 +60,6 @@ func main() {
 	} else {
 		tracing.Info(ctx, "starting master")
 
-		partitioner := partitioning.NewLinePartitioner()
 		m, err := master.New(master.Config{
 			WorkspaceFolder:            cfg.WorkspaceFolder,
 			NumberOfMapWorkers:         3,

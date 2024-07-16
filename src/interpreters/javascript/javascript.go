@@ -25,13 +25,13 @@ func newScript(input string) (*Script, error) {
 }
 
 func (script *Script) Partition(key string, numberOfReduceTasks uint32) (uint32, error) {
-	reduceDunction, err := script.v8Context.RunScript("reduce", "script.js")
+	partitionFunction, err := script.v8Context.RunScript("partition", "script.js")
 	if err != nil {
 		return 0, fmt.Errorf("fetching map function from js: %w", err)
 	}
-	defer reduceDunction.Release()
+	defer partitionFunction.Release()
 
-	fn, err := reduceDunction.AsFunction()
+	fn, err := partitionFunction.AsFunction()
 	if err != nil {
 		return 0, fmt.Errorf("casting value to js function: %w", err)
 	}

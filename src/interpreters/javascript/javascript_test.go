@@ -7,6 +7,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPartition(t *testing.T) {
+	t.Parallel()
+
+	jsScript := `
+const partition = (key, r) => {
+  let hash = 0
+
+  for (const char of key) {
+    hash ^= char.charCodeAt(0)
+  }
+
+  return hash % r
+}
+	`
+
+	script, err := newScript(jsScript)
+	require.NoError(t, err)
+
+	partition, err := script.Partition("key", 5)
+	require.NoError(t, err)
+	assert.True(t, partition >= 0 && partition < 5)
+}
+
 func TestMap(t *testing.T) {
 	t.Parallel()
 

@@ -9,6 +9,10 @@ import (
 
 type LineSorter struct{}
 
+func NewLineSorter() LineSorter {
+	return LineSorter{}
+}
+
 func (s LineSorter) Sort(in io.Reader) (io.Reader, error) {
 	parts := make([]string, 0)
 	scanner := bufio.NewScanner(in)

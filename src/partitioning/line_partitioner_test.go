@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -129,4 +130,52 @@ func TestPartition(t *testing.T) {
 		assert.Equal(t, "line_1\n", mustReadFile(partitionFilePaths[1]))
 		assert.Equal(t, "line_2\n", mustReadFile(partitionFilePaths[2]))
 	})
+}
+
+func TestCountLinesInFile(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		input    string
+		expected int
+	}{
+		{
+			input:    "\n",
+			expected: 0,
+		},
+		{
+			input:    "\n\n\n",
+			expected: 0,
+		},
+		{
+			input:    "\na\n\n\nb\n\n",
+			expected: 2,
+		},
+		{
+			input:    "",
+			expected: 0,
+		},
+		{
+			input:    "a",
+			expected: 1,
+		},
+		{
+			input:    "a b c",
+			expected: 1,
+		},
+		{
+			input:    "a\nb",
+			expected: 2,
+		},
+		{
+			input:    "abc\ncba\n12345 6789",
+			expected: 3,
+		},
+	}
+
+	for _, tt := range cases {
+		n, err := countLinesInFile(strings.NewReader(tt.input))
+		require.NoError(t, err)
+		assert.Equal(t, tt.expected, n)
+	}
 }

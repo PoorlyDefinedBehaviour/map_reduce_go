@@ -2,7 +2,6 @@ package partitioning
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -17,14 +16,14 @@ func NewLinePartitioner() *LinePartitioner {
 	return &LinePartitioner{}
 }
 
-func (partitioner *LinePartitioner) Partition(filepath string, outputFolder string, maxNumberOfPartitions uint32) (partitionFilePaths []string, err error) {
-	file, err := os.Open(filepath)
+func (partitioner *LinePartitioner) Partition(filePath string, outputFolder string, maxNumberOfPartitions uint32) (partitionFilePaths []string, err error) {
+	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("opening input file: filepath=%s %w", filepath, err)
+		return nil, fmt.Errorf("opening input file: filepath=%s %w", filePath, err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("closing input file: filepath=%s %w", filepath, closeErr))
+			err = errors.Join(err, fmt.Errorf("closing input file: filepath=%s %w", filePath, closeErr))
 		}
 	}()
 
@@ -74,6 +73,7 @@ func (partitioner *LinePartitioner) Partition(filepath string, outputFolder stri
 			}
 
 			if partitionFile == nil {
+
 				partitionFile, err = os.OpenFile(partitionFilePath, os.O_RDWR|os.O_CREATE, 0644)
 				if err != nil {
 					return nil, fmt.Errorf("creating/opening partition file: path=%s %w", partitionFilePath, err)
@@ -106,30 +106,39 @@ func (partitioner *LinePartitioner) Partition(filepath string, outputFolder stri
 // Returns the number of lines in the reader by counting the number of times \n appears.
 func countLinesInFile(reader io.Reader) (int, error) {
 	const bufferSizeInBytes = 32 * 1024
+
 	buffer := make([]byte, bufferSizeInBytes)
-
 	count := 0
-
-	lineSeparator := []byte{'\n'}
-
-	isFileEmpty := true
+	state := 0
 
 	for {
 		bytesRead, err := reader.Read(buffer)
 
-		count += bytes.Count(buffer[:bytesRead], lineSeparator)
+		for _, b := range buffer[:bytesRead] {
 
-		isFileEmpty = isFileEmpty && bytesRead == 0
+			switch state {
+			// Looking for a value that's not a new line.
+			case 0:
+				if b != '\n' {
+					count++
+					state = 1
+				}
 
-		if errors.Is(err, io.EOF) {
-			// If the file has a single line without \n at the end.
-			if !isFileEmpty && count == 0 {
-				return 1, nil
+			// Looking for new line.
+			case 1:
+				if b == '\n' {
+					state = 0
+				}
+
+			default:
+				panic(fmt.Sprintf("unknown state: %d", state))
 			}
-			return count, nil
 		}
 
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return count, nil
+			}
 			return count, fmt.Errorf("reading file contents: %w", err)
 		}
 	}
