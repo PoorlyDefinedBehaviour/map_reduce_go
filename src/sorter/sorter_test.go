@@ -1,6 +1,7 @@
 package sorter
 
 import (
+	"bytes"
 	"io"
 	"strings"
 	"testing"
@@ -45,4 +46,27 @@ func TestSort(t *testing.T) {
 
 		assert.Equal(t, tt.expected, string(data))
 	}
+}
+
+func TestSortAndMerge(t *testing.T) {
+	t.Parallel()
+
+	t.Run("basic", func(t *testing.T) {
+		t.Parallel()
+
+		a := strings.NewReader("1\n3\n5")
+		b := strings.NewReader("0\n2\n4")
+		out := bytes.NewBuffer([]byte{})
+
+		sorter := NewLineSorter()
+		require.NoError(t, sorter.SortAndMerge(a, b, out))
+
+		assert.Equal(t, "0\n1\n2\n3\n4\n5", out.String())
+	})
+
+	t.Run("model", func(t *testing.T) {
+		t.Parallel()
+
+		panic("TODO")
+	})
 }

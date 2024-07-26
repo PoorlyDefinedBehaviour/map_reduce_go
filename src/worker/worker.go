@@ -2,7 +2,6 @@ package worker
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,12 +10,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/assert"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/interpreters/javascript"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/iterator"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/queue"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
 	"golang.org/x/sync/errgroup"
 )
@@ -109,7 +111,8 @@ func (worker *Worker) HeartbeatControlLoop(ctx context.Context) {
 	}
 }
 
-func (worker *Worker) OnReduceTaskReceived(ctx context.Context, task contracts.ReduceTask) error {
+func (worker *Worker) OnReduceTaskReceived(ctx context.Context, task contracts.ReduceTask) (returnErr error) {
+	fmt.Printf("\n\naaaaaaa OnReduceTaskReceived: task %+v\n\n", task)
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
 
@@ -152,9 +155,36 @@ func (worker *Worker) OnReduceTaskReceived(ctx context.Context, task contracts.R
 		return fmt.Errorf("splitting files: %w", err)
 	}
 
-	if err := worker.sortReduceInputFiles(filePaths); err != nil {
+	sortedFile, err := worker.sortReduceInputFiles(filePaths)
+	if err != nil {
 		return fmt.Errorf("soring reduce input files: %w", err)
 	}
+
+	it := iterator.NewLineIterator(sortedFile)
+
+	jsScript, err := javascript.Parse(task.Script)
+	if err != nil {
+		return fmt.Errorf("parsing reduce script: %w", err)
+	}
+	defer jsScript.Close()
+
+	outputFilePath := filepath.Join(worker.config.WorkspaceFolder, fmt.Sprint(task.ID), "outputs", "output")
+	f, err := os.OpenFile(outputFilePath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return fmt.Errorf("creating output file: %w", err)
+	}
+	if err := iterateReduceInput(it, jsScript, f); err != nil {
+		return fmt.Errorf("iterating reduce input file: %w", err)
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("closing ouput file: %w", err))
+		}
+	}()
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing output file: %w", err)
+	}
+	fmt.Printf("\n\naaaaaaa output file: f.Name() %+v\n\n", f.Name())
 
 	return nil
 }
@@ -200,16 +230,16 @@ func (worker *Worker) downloadFile(ctx context.Context, folder string, file cont
 	return newFile, nil
 }
 
-func (worker *Worker) sortReduceInputFiles(filePaths []string) error {
+func (worker *Worker) sortReduceInputFiles(filePaths []string) (*os.File, error) {
 	wg := errgroup.Group{}
 
-	files := make([]*os.File, 0, len(filePaths))
+	files := make([]*os.File, len(filePaths))
 
 	// Sort every file by themselves.
-	for _, filePath := range filePaths {
+	for i, filePath := range filePaths {
+		i := i
 		filePath := filePath
 		wg.Go(func() (err error) {
-
 			file, err := os.Open(filePath)
 			if err != nil {
 				return fmt.Errorf("opening file: path=%s %w", filePath, err)
@@ -230,105 +260,79 @@ func (worker *Worker) sortReduceInputFiles(filePaths []string) error {
 				return fmt.Errorf("creating sorted file: %w", err)
 			}
 
-			defer func() {
-				if closeErr := sortedFile.Close(); closeErr != nil {
-					err = errors.Join(err, fmt.Errorf("closing file: %w", closeErr))
-				}
-			}()
-
 			if _, err := io.Copy(sortedFile, reader); err != nil {
 				return fmt.Errorf("writing sorted data to file: %w", err)
 			}
 
-			if err := sortedFile.Sync(); err != nil {
-				return fmt.Errorf("syncing file: %w", err)
-			}
-
-			if err := os.Rename(sortedFile.Name(), file.Name()); err != nil {
+			if err := os.Remove(file.Name()); err != nil {
 				return fmt.Errorf("renaming sorted file: %w", err)
 			}
 
-			files = append(files, sortedFile)
+			files[i] = sortedFile
 
 			return nil
 		})
 	}
 
-	// Merge sorted files.
-	for i := 0; i < len(files); i += 2 {
-		a := files[i]
-		b := files[i+1]
+	if err := wg.Wait(); err != nil {
+		return nil, fmt.Errorf("sorting reduce input files individually: %w", err)
+	}
 
+	// The queue of files to sort.
+	sortQueue := queue.New[*os.File]()
+	for _, file := range files {
+		sortQueue.Add(file)
+	}
+
+	for sortQueue.Len() > 1 {
+		// Take the first from files from the queue and sort them.
+		a, _ := sortQueue.Pop()
+		b, _ := sortQueue.Pop()
+
+		if a != nil {
+			if _, err := a.Seek(0, 0); err != nil {
+				return nil, fmt.Errorf("seeking to beginning of file: %w", err)
+			}
+		}
+		if b != nil {
+			if _, err := b.Seek(0, 0); err != nil {
+				return nil, fmt.Errorf("seeking to beginning of file: %w", err)
+			}
+		}
+
+		// The sorted file is the file contaning the contents of the two files being sorted in order.
 		sortedFile, err := os.OpenFile(filepath.Join(filepath.Dir(a.Name()), fmt.Sprintf("sorted_temp_%s", filepath.Base(a.Name()))), os.O_RDWR|os.O_CREATE, 0644)
 		if err != nil {
-			return fmt.Errorf("creating sorted file: %w", err)
+			return nil, fmt.Errorf("creating sorted file: %w", err)
 		}
 
 		defer func() {
-			if closeErr := sortedFile.Close(); closeErr != nil {
-				err = errors.Join(err, fmt.Errorf("closing file: %w", closeErr))
+			if a != nil {
+				if closeErr := a.Close(); closeErr != nil {
+					err = errors.Join(err, fmt.Errorf("closing file: %w", closeErr))
+				}
+			}
+			if b != nil {
+				if closeErr := b.Close(); closeErr != nil {
+					err = errors.Join(err, fmt.Errorf("closing file: %w", closeErr))
+				}
 			}
 		}()
 
-		iterA := iterator.NewLineIterator(a)
-		iterB := iterator.NewLineIterator(b)
-
-		for {
-			nextA, doneA := iterA.Peek()
-			if err != nil {
-				return fmt.Errorf("iterating file: path=%s %w", a.Name(), err)
-			}
-
-			nextB, doneB := iterB.Peek()
-			if err != nil {
-				return fmt.Errorf("iterating file: path=%s %w", b.Name(), err)
-			}
-
-			var value []byte
-
-			if !doneA && !doneB {
-				if bytes.Compare(nextA, nextB) == -1 {
-					_, _ = iterA.Next()
-					value = nextA
-				} else {
-					_, _ = iterB.Next()
-					value = nextB
-				}
-			} else if !doneA {
-				_, _ = iterA.Next()
-				value = nextA
-			} else if !doneB {
-				_, _ = iterB.Next()
-				value = nextB
-			} else {
-				break
-			}
-
-			if _, err := sortedFile.Write(value); err != nil {
-				return fmt.Errorf("writing to sorted file: %w", err)
-			}
-			if _, err := sortedFile.Write([]byte("\n")); err != nil {
-				return fmt.Errorf("writing to \n sorted file: %w", err)
-			}
+		if err := worker.sorter.SortAndMerge(a, b, sortedFile); err != nil {
+			return nil, fmt.Errorf("sorting files: %w", err)
 		}
 
-		if err := sortedFile.Sync(); err != nil {
-			return fmt.Errorf("syncing file: %w", err)
-		}
-
-		if err := os.Rename(sortedFile.Name(), a.Name()); err != nil {
-			return fmt.Errorf("renaming sorted file: %w", err)
-		}
-
-		if err := os.Remove(b.Name()); err != nil {
-			return fmt.Errorf("removing file: path=%s %w", b.Name(), err)
-		}
-
+		sortQueue.Add(sortedFile)
 	}
 
-	// TODO: handle odd number of files
+	assert.Equal(1, sortQueue.Len())
+	sortedFile, _ := sortQueue.Pop()
+	if _, err := sortedFile.Seek(0, 0); err != nil {
+		return nil, fmt.Errorf("seeking to beginning of sorted file: %w", err)
+	}
 
-	return nil
+	return sortedFile, nil
 }
 
 func (worker *Worker) splitFiles(folder string, files []contracts.File) ([]string, error) {
@@ -353,6 +357,7 @@ func (worker *Worker) splitFiles(folder string, files []contracts.File) ([]strin
 }
 
 func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapTask) error {
+	fmt.Printf("\n\naaaaaaa OnMapTaskReceived: task %+v\n\n", task.FilePath)
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
 	if task.ID == 0 {
@@ -425,6 +430,7 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapT
 		)
 	}
 
+	fmt.Printf("\n\naaaaaaa map task completed %+v\n\n", completedTask)
 	timeoutCtx, cancel := context.WithTimeout(ctx, worker.config.MapTasksCompletedTimeout)
 	defer cancel()
 	if err := worker.masterClient.MapTasksCompleted(timeoutCtx, worker.config.Addr, []contracts.CompletedTask{completedTask}); err != nil {
@@ -432,6 +438,46 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapT
 	}
 
 	return nil
+}
+
+func iterateReduceInput(it *iterator.LineIterator, jsScript *javascript.Script, out io.Writer) error {
+	for {
+		buffer, done := it.Peek()
+		if done {
+			return nil
+		}
+
+		key, _, found := strings.Cut(string(buffer), " ")
+		assert.True(found, "file should contain key value pairs separated by space")
+
+		var previousKey string
+
+		if err := jsScript.Reduce(
+			string(key),
+			func() (string, bool) {
+				buffer, done := it.Peek()
+				if done {
+					return "", true
+				}
+				key, value, found := strings.Cut(string(buffer), " ")
+				assert.True(found, "file should contain key value pairs separated by space")
+				if previousKey != "" && key != string(previousKey) {
+					return "", true
+				}
+				_, _ = it.Next()
+				previousKey = key
+				return string(value), false
+			},
+			func(key, value string) error {
+				fmt.Printf("\n\naaaaaaa reduce emit: key %+v value %+v\n\n", key, value)
+				if _, err := out.Write([]byte(fmt.Sprintf("%s %s\n", key, value))); err != nil {
+					return fmt.Errorf("writing output: %w", err)
+				}
+				return nil
+			}); err != nil {
+			return fmt.Errorf("calling user provided reduce function: %w", err)
+		}
+	}
 }
 
 func (worker *Worker) sendHeartbeat(ctx context.Context) error {

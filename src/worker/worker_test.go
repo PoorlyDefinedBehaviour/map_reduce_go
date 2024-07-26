@@ -3,8 +3,13 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/clock"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
@@ -12,6 +17,7 @@ import (
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/partitioning"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/sorter"
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/testingext"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,7 +56,7 @@ func TestOnReduceTaskReceived(t *testing.T) {
 
 	file2 := testingext.TempFile(testingext.WithDir(dir), testingext.WithFileName("input_2"))
 	defer file2.Close()
-	_, err = file2.WriteString("u 1\ni 1\na j")
+	_, err = file2.WriteString("u 1\ni 1\na 2")
 	require.NoError(t, err)
 	file2Info, err := file2.Stat()
 	require.NoError(t, err)
@@ -107,4 +113,59 @@ const reduce = (word, nextValueIter, emit) => {
 		},
 	})
 	require.NoError(t, err)
+}
+
+func TestSortReduceInputFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := testingext.TempDir()
+
+	worker, err := New(
+		Config{
+			Addr:                       "addr",
+			WorkspaceFolder:            dir,
+			MaxFileSizeBytes:           1024,
+			MemoryAvailable:            1024,
+			HeartbeatInterval:          5 * time.Second,
+			HeartbeatTimeout:           15 * time.Second,
+			MapTasksCompletedTimeout:   5 * time.Second,
+			MaxInflightFileDownloads:   10,
+			ExternalSortMaxMemoryBytes: 1024,
+		},
+		nil,
+		filestorage.New(),
+		clock.New(),
+		partitioning.NewLinePartitioner(),
+		sorter.NewLineSorter(),
+	)
+	require.NoError(t, err)
+
+	t.Run("basic", func(t *testing.T) {
+		t.Parallel()
+
+		files := []*os.File{
+			testingext.WriteFile(filepath.Join(dir, "TestSortReduceInputFiles", uuid.NewString()), "b 1\nf 1\nd 1"),
+			testingext.WriteFile(filepath.Join(dir, "TestSortReduceInputFiles", uuid.NewString()), "a 2\nc 3\na 1"),
+			testingext.WriteFile(filepath.Join(dir, "TestSortReduceInputFiles", uuid.NewString()), "z 2\nx 5\ny 10"),
+		}
+
+		paths := []string{}
+		for _, file := range files {
+			paths = append(paths, file.Name())
+		}
+
+		sortedFile, err := worker.sortReduceInputFiles(paths)
+		require.NoError(t, err)
+
+		buffer, err := io.ReadAll(sortedFile)
+		require.NoError(t, err)
+
+		assert.Equal(t, "a 1\na 2\nb 1\nc 3\nd 1\nf 1\nx 5\ny 10\nz 2", string(buffer))
+	})
+
+	t.Run("model", func(t *testing.T) {
+		t.Parallel()
+
+		panic("TODO")
+	})
 }

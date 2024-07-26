@@ -88,13 +88,20 @@ func (handler *MasterIOHandler) OnMapTasksCompletedReceived(workerAddr contracts
 	}
 
 	for _, assignment := range assignments {
-		client, err := handler.getOrCreateClient(assignment.WorkerAddr)
+		client, err := handler.getOrCreateClient(assignment.GetWorkerAddr())
 		if err != nil {
 			return fmt.Errorf("getting worker client: %w", err)
 		}
 
-		if err := client.AssignReduceTask(context.Background(), assignment.Task); err != nil {
-			return fmt.Errorf("assigning map task to worker: %w", err)
+		switch assignment := assignment.(type) {
+		case master.MapTaskAssignment:
+			if err := client.AssignMapTask(context.Background(), assignment.Task); err != nil {
+				return fmt.Errorf("assigning map task to worker: %w", err)
+			}
+		case master.ReduceTaskAssignment:
+			if err := client.AssignReduceTask(context.Background(), assignment.Task); err != nil {
+				return fmt.Errorf("assigning map task to worker: %w", err)
+			}
 		}
 	}
 

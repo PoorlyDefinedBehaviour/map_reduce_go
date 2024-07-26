@@ -188,9 +188,8 @@ func (script *Script) Reduce(key string, nextValueIter func() (string, bool), em
 }
 
 func (script *Script) Close() {
-	script.scriptValue.Release()
+	script.v8Context.Isolate().TerminateExecution()
 	script.v8Context.Close()
-	script.v8Context.Isolate().Dispose()
 }
 
 func Parse(input string) (*Script, error) {

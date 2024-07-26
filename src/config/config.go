@@ -22,11 +22,13 @@ type Config struct {
 
 	MaxWorkerHeartbeatInterval time.Duration
 
-	WorkerHeartbeatInterval        time.Duration
-	WorkerHeartbeatTimeout         time.Duration
-	WorkerMapTasksCompletedTimeout time.Duration
-	WorkerMaxFileSizeBytes         uint64
-	WorkerMemoryAvailable          uint64
+	WorkerHeartbeatInterval          time.Duration
+	WorkerHeartbeatTimeout           time.Duration
+	WorkerMapTasksCompletedTimeout   time.Duration
+	WorkerMaxFileSizeBytes           uint64
+	WorkerMemoryAvailable            uint64
+	WorkerExternalSortMaxMemoryBytes uint64
+	WorkerMaxInflightFileDownloads   uint32
 
 	MessageBusConnectionCleanupInterval time.Duration
 	GrpcServerPort                      int
@@ -54,6 +56,13 @@ func Parse(args []string) (*Config, error) {
 	flagSet.Uint64Var(&config.WorkerMaxFileSizeBytes, "worker.max-file-size-bytes", 67108864, "The maximum number of bytes each output file can have")
 	var workerMemoryAvailable string
 	flagSet.StringVar(&workerMemoryAvailable, "worker.memory", "", "The amount of memory this worker has available")
+	mib64, err := memory.FromStringToBytes("64Mi")
+	if err != nil {
+		return nil, fmt.Errorf("parsing memory: %w", err)
+	}
+	flagSet.Uint64Var(&config.WorkerExternalSortMaxMemoryBytes, "worker.external-sort-max-memory-bytes", mib64, "The max number of bytes a file can have before being read into memory for sorting")
+	var workerMaxInflightFileDownloads uint64
+	flagSet.Uint64Var(&workerMaxInflightFileDownloads, "worker.max-inflight-file-downloads", 64, "The max number of files that can be downloaded at the same time")
 
 	flagSet.DurationVar(&config.MessageBusConnectionCleanupInterval, "message-bus.connection-clean-up-interval", 5*time.Second, "How long to wait for between checking if any of the client connections have disconnected")
 	flagSet.IntVar(&config.GrpcServerPort, "grpc.port", 8002, "The port the grpc server will listen on")
@@ -79,6 +88,10 @@ func Parse(args []string) (*Config, error) {
 		config.WorkerMemoryAvailable = n
 		if config.WorkerMemoryAvailable == 0 {
 			return &config, fmt.Errorf("worker.memory is required")
+		}
+		config.WorkerMaxInflightFileDownloads = uint32(workerMaxInflightFileDownloads)
+		if config.WorkerMaxInflightFileDownloads == 0 {
+			return &config, fmt.Errorf("worker.max-inflight-file-downloads must be greater than 0")
 		}
 	}
 

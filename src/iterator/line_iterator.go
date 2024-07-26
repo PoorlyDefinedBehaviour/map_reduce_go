@@ -17,6 +17,10 @@ func NewLineIterator(reader io.Reader) *LineIterator {
 }
 
 func (it *LineIterator) Peek() ([]byte, bool) {
+	if it.peekBuffer != nil {
+		return it.peekBuffer, false
+	}
+
 	if !it.scanner.Scan() {
 		return nil, true
 	}

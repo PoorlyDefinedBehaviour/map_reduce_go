@@ -144,3 +144,35 @@ func TestTryAssignMapTasks(t *testing.T) {
 	// )
 	require.NoError(t, err)
 }
+
+func TestOnMapTasksCompletedReceived(t *testing.T) {
+	t.Parallel()
+
+	clock := clock.NewMock()
+	m, err := New(
+		Config{NumberOfMapWorkers: 10, WorkspaceFolder: "todo", MaxWorkerHeartbeatInterval: 10 * time.Millisecond},
+		partitioning.NewLinePartitioner(),
+		clock,
+	)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerAddr: "127.0.0.1:8080", MemoryAvailable: 500 * memory.Mib})
+	require.NoError(t, err)
+	assert.Empty(t, out)
+
+	inputFile := newTempInputFile(t, 1)
+	defer inputFile.Close()
+
+	input, err := NewValidatedInput(contracts.Input{
+		File:                inputFile.Name(),
+		NumberOfMapTasks:    3,
+		NumberOfReduceTasks: 3,
+		NumberOfPartitions:  3,
+		RequestsMemory:      100 * memory.Mib,
+	})
+	require.NoError(t, err)
+	out, err = m.onNewTask(input)
+	require.NoError(t, err)
+	panic("TODO")
+}

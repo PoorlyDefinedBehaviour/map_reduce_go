@@ -41,13 +41,15 @@ func main() {
 		fileStorage := filestorage.New()
 
 		worker, err := worker.New(worker.Config{
-			WorkspaceFolder:          cfg.WorkspaceFolder,
-			MaxFileSizeBytes:         cfg.WorkerMaxFileSizeBytes,
-			Addr:                     fmt.Sprintf("%s:%d", cfg.WorkerHost, cfg.GrpcServerPort),
-			HeartbeatInterval:        cfg.WorkerHeartbeatInterval,
-			HeartbeatTimeout:         cfg.WorkerHeartbeatTimeout,
-			MapTasksCompletedTimeout: cfg.WorkerMapTasksCompletedTimeout,
-			MemoryAvailable:          cfg.WorkerMemoryAvailable,
+			WorkspaceFolder:            cfg.WorkspaceFolder,
+			MaxFileSizeBytes:           cfg.WorkerMaxFileSizeBytes,
+			Addr:                       fmt.Sprintf("%s:%d", cfg.WorkerHost, cfg.GrpcServerPort),
+			HeartbeatInterval:          cfg.WorkerHeartbeatInterval,
+			HeartbeatTimeout:           cfg.WorkerHeartbeatTimeout,
+			MapTasksCompletedTimeout:   cfg.WorkerMapTasksCompletedTimeout,
+			MemoryAvailable:            cfg.WorkerMemoryAvailable,
+			ExternalSortMaxMemoryBytes: cfg.WorkerExternalSortMaxMemoryBytes,
+			MaxInflightFileDownloads:   cfg.WorkerMaxInflightFileDownloads,
 		}, masterClient, fileStorage, clock, partitioner, sorter.NewLineSorter())
 		if err != nil {
 			panic(fmt.Errorf("instantiating worker: %w", err))

@@ -40,7 +40,11 @@ func TempFile(options ...TempFileOption) *os.File {
 	for _, option := range options {
 		option(&config)
 	}
-	if config.Dir == "" {
+	if config.Dir != "" {
+		if err := os.MkdirAll(config.Dir, 0755); err != nil {
+			panic(err)
+		}
+	} else {
 		config.Dir = TempDir()
 	}
 	if config.FileName == "" {
@@ -49,6 +53,14 @@ func TempFile(options ...TempFileOption) *os.File {
 
 	file, err := os.OpenFile(filepath.Join(config.Dir, uuid.NewString()), os.O_RDWR|os.O_CREATE, 0755)
 	if err != nil {
+		panic(err)
+	}
+	return file
+}
+
+func WriteFile(path string, data string) *os.File {
+	file := TempFile(WithDir(filepath.Dir(path)), WithFileName(filepath.Base(path)))
+	if _, err := file.WriteString(data); err != nil {
 		panic(err)
 	}
 	return file

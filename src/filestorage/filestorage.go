@@ -112,7 +112,11 @@ func (storage *FileStorage) NewWriter(ctx context.Context, folder string) (contr
 		return nil, fmt.Errorf("creating file path: path=%s %w", folder, err)
 	}
 
-	wrapper := FlushOnCloseFile{inner: &inner{folder: folder}}
+	wrapper := FlushOnCloseFile{
+		inner: &inner{
+			folder: folder,
+			files:  make(map[uint32]*os.File),
+		}}
 
 	return wrapper, nil
 }

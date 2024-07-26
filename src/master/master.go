@@ -104,6 +104,10 @@ func (f *pendingFile) isAssignedToWorker() bool {
 	return f.workerAddr != ""
 }
 
+type TaskAssignment interface {
+	GetWorkerAddr() string
+}
+
 type MapTaskAssignment struct {
 	// The worker that should receive the task.
 	WorkerAddr string
@@ -111,11 +115,19 @@ type MapTaskAssignment struct {
 	Task contracts.MapTask
 }
 
+func (t MapTaskAssignment) GetWorkerAddr() string {
+	return t.WorkerAddr
+}
+
 type ReduceTaskAssignment struct {
 	// The worker that should receive the task.
 	WorkerAddr string
 	// The task that should be given to the worker.
 	Task contracts.ReduceTask
+}
+
+func (t ReduceTaskAssignment) GetWorkerAddr() string {
+	return t.WorkerAddr
 }
 
 func New(config Config, partitioner contracts.Partitioner, clock contracts.Clock) (*Master, error) {
@@ -236,7 +248,7 @@ func (master *Master) onNewTask(input ValidatedInput) ([]MapTaskAssignment, erro
 	}
 
 	files := partitionFilePathsToPendingFiles(partitionFilePaths)
-
+	fmt.Printf("\n\naaaaaaa files %+v\n\n", files)
 	// Create tasks that will be assigned to workers later.
 	task := &task{
 		id:             master.getNextTaskID(),
@@ -261,7 +273,11 @@ func (master *Master) onNewTask(input ValidatedInput) ([]MapTaskAssignment, erro
 	return []MapTaskAssignment{*assignment}, nil
 }
 
-func (master *Master) OnMapTasksCompletedReceived(workerAddr contracts.WorkerAddr, tasks []contracts.CompletedTask) ([]ReduceTaskAssignment, error) {
+func (master *Master) OnMapTasksCompletedReceived(workerAddr contracts.WorkerAddr, tasks []contracts.CompletedTask) ([]TaskAssignment, error) {
+	fmt.Printf("\n\naaaaaaa OnMapTasksCompletedReceived: tasks %+v\n\n", tasks)
+
+	assignments := make([]TaskAssignment, 0)
+
 	for _, completedTask := range tasks {
 		task, ok := master.tasks[completedTask.TaskID]
 		if !ok {
@@ -307,24 +323,35 @@ func (master *Master) OnMapTasksCompletedReceived(workerAddr contracts.WorkerAdd
 					outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
 				}
 			}
+			continue
 		}
-	}
 
-	for _, task := range master.tasks {
-		if !task.IsCompleted() && task.taskType == contracts.TaskTypeReduce {
-			assignment, err := master.tryAssignReduceTask(task)
+		if t.taskType == contracts.TaskTypeMap {
+			assignment, err := master.tryAssignMapTask(t)
 			if err != nil {
 				if errors.Is(err, ErrNoWorkerAvailable) {
-					return nil, nil
+					break
 				}
-				return nil, fmt.Errorf("trying to assign task to a worker: %w", err)
+				return nil, fmt.Errorf("trying to assign map task to a worker: %w", err)
 			}
 
-			return []ReduceTaskAssignment{*assignment}, nil
+			assignments = append(assignments, *assignment)
+		}
+
+		if t.taskType == contracts.TaskTypeReduce {
+			assignment, err := master.tryAssignReduceTask(t)
+			if err != nil {
+				if errors.Is(err, ErrNoWorkerAvailable) {
+					break
+				}
+				return nil, fmt.Errorf("trying to assign reduce task to a worker: %w", err)
+			}
+
+			assignments = append(assignments, *assignment)
 		}
 	}
 
-	return nil, nil
+	return assignments, nil
 }
 
 func partitionFilePathsToPendingFiles(partitionFilePaths []string) map[contracts.FileID]pendingFile {

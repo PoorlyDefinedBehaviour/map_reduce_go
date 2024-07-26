@@ -7,6 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestClose(t *testing.T) {
+	t.Parallel()
+
+	script, err := newScript("const map = (filename, contents, emit) => {}")
+	require.NoError(t, err)
+
+	assert.NotPanics(t, func() { script.Close() })
+}
+
 func TestPartition(t *testing.T) {
 	t.Parallel()
 
