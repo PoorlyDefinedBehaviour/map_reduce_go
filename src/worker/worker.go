@@ -357,7 +357,7 @@ func (worker *Worker) splitFiles(folder string, files []contracts.File) ([]strin
 }
 
 func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapTask) error {
-	fmt.Printf("\n\naaaaaaa OnMapTaskReceived: task %+v\n\n", task.FilePath)
+	fmt.Printf("\n\naaaaaaa task %+v\n\n", task)
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
 	if task.ID == 0 {
@@ -371,6 +371,9 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapT
 	}
 	if task.FilePath == "" {
 		return fmt.Errorf("map task file path is required")
+	}
+	if task.NumberOfReduceTasks == 0 {
+		return fmt.Errorf("map task number of reduce tasks is required")
 	}
 
 	jsScript, err := javascript.Parse(task.Script)
@@ -430,7 +433,6 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapT
 		)
 	}
 
-	fmt.Printf("\n\naaaaaaa map task completed %+v\n\n", completedTask)
 	timeoutCtx, cancel := context.WithTimeout(ctx, worker.config.MapTasksCompletedTimeout)
 	defer cancel()
 	if err := worker.masterClient.MapTasksCompleted(timeoutCtx, worker.config.Addr, []contracts.CompletedTask{completedTask}); err != nil {

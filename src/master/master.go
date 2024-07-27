@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
-	"github.com/poorlydefinedbehaviour/map_reduce_go/src/tracing"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/mapsext"
+	"github.com/poorlydefinedbehaviour/map_reduce_go/src/slicesext"
 )
 
 var ErrNoWorkerAvailable = errors.New("no worker is available")
@@ -74,21 +75,25 @@ type Config struct {
 }
 
 type task struct {
+	// The id of the main task. The task created when a client request came in.
 	id contracts.TaskID
+	// The id of this map of reduce task. The task is a subtask of the main task.
+	subtaskID contracts.TaskID
 	// The amount of memory the task will require in bytes.
-	requestsMemory uint64
-	taskType       contracts.TaskType
+	requestsMemory      uint64
+	numberOfReduceTasks uint32
+	taskType            contracts.TaskType
 	// The script that the worker should execute.
 	script   string
 	assigned bool
 
-	files       map[contracts.FileID]pendingFile
+	files       []pendingFile
 	outputFiles map[contracts.FileID]contracts.OutputFile
 }
 
 // Returns true when the files that make up this task have been processed.
 func (t *task) IsCompleted() bool {
-	return len(t.files) == 0
+	return len(t.outputFiles) == len(t.files)
 }
 
 type pendingFile struct {
@@ -193,7 +198,7 @@ func validateInput(input *contracts.Input) (ValidatedInput, error) {
 	return ValidatedInput{value: input}, nil
 }
 
-func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]MapTaskAssignment, error) {
+func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]TaskAssignment, error) {
 	master.mu.Lock()
 	defer master.mu.Unlock()
 
@@ -207,9 +212,12 @@ func (master *Master) OnMessage(ctx context.Context, msg InputMessage) ([]MapTas
 		master.cleanUpFailedWorkers()
 
 	case *NewTaskMessage:
-		assignments, err := master.onNewTask(msg.Input)
+		if err := master.onNewTask(msg.Input); err != nil {
+			return nil, fmt.Errorf("handling NewTaskMessage: %w", err)
+		}
+		assignments, err := master.AssignTasks()
 		if err != nil {
-			return assignments, fmt.Errorf("handling NewTaskMessage: %w", err)
+			return nil, fmt.Errorf("assigning tasks: %w", err)
 		}
 
 		return assignments, nil
@@ -237,108 +245,90 @@ func (master *Master) onHeartbeatReceived(msg *HeartbeatMessage) error {
 }
 
 // Called when a new task is received. New tasks are sent by clients.
-func (master *Master) onNewTask(input ValidatedInput) ([]MapTaskAssignment, error) {
+func (master *Master) onNewTask(input ValidatedInput) error {
 	partitionFilePaths, err := master.partitioner.Partition(
 		input.value.File,
 		master.Config.WorkspaceFolder,
 		input.value.NumberOfPartitions,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("partitioning input file: %w", err)
+		return fmt.Errorf("partitioning input file: %w", err)
 	}
 
-	files := partitionFilePathsToPendingFiles(partitionFilePaths)
-	fmt.Printf("\n\naaaaaaa files %+v\n\n", files)
+	files := slicesext.MapIndex(partitionFilePaths, func(i int, path string) pendingFile {
+		return pendingFile{
+			fileID:   contracts.FileID(i + 1),
+			filePath: path,
+		}
+	})
+
 	// Create tasks that will be assigned to workers later.
 	task := &task{
-		id:             master.getNextTaskID(),
-		requestsMemory: input.value.RequestsMemory,
-		taskType:       contracts.TaskTypeMap,
-		script:         input.value.Script,
-		files:          files,
-		outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
-	}
-
-	assignment, err := master.tryAssignMapTask(task)
-	if err != nil {
-		if errors.Is(err, ErrNoWorkerAvailable) {
-			tracing.Info(context.Background(), "no workers available", "task", task.id, "requests", input.value.RequestsMemory)
-			return nil, nil
-		}
-		return nil, fmt.Errorf("trying to assign task to a worker: %w", err)
+		id:                  master.getNextTaskID(),
+		requestsMemory:      input.value.RequestsMemory,
+		taskType:            contracts.TaskTypeMap,
+		script:              input.value.Script,
+		numberOfReduceTasks: input.value.NumberOfReduceTasks,
+		files:               files,
+		outputFiles:         make(map[contracts.FileID]contracts.OutputFile),
 	}
 
 	master.tasks[task.id] = task
 
-	return []MapTaskAssignment{*assignment}, nil
+	return nil
 }
 
-func (master *Master) OnMapTasksCompletedReceived(workerAddr contracts.WorkerAddr, tasks []contracts.CompletedTask) ([]TaskAssignment, error) {
-	fmt.Printf("\n\naaaaaaa OnMapTasksCompletedReceived: tasks %+v\n\n", tasks)
+func (master *Master) OnMapTaskCompletedReceived(workerAddr contracts.WorkerAddr, completedTask contracts.CompletedTask) {
+	task, ok := master.tasks[completedTask.TaskID]
+	if !ok {
+		return
+	}
 
-	assignments := make([]TaskAssignment, 0)
-
-	for _, completedTask := range tasks {
-		task, ok := master.tasks[completedTask.TaskID]
-		if !ok {
+	for _, outputFile := range completedTask.OutputFiles {
+		if outputFile.FileID == 0 {
+			panic(fmt.Sprintf("Invalid output file id: %+v", outputFile))
+		}
+		file := slicesext.Find(task.files, func(file pendingFile) bool { return file.fileID == outputFile.FileID })
+		if file == nil {
 			continue
 		}
 
-		for _, outputFile := range completedTask.OutputFiles {
-			if outputFile.FileID == 0 {
-				panic(fmt.Sprintf("Invalid output file id: %+v", outputFile))
-			}
-			if _, ok := task.files[outputFile.FileID]; ok {
-				worker := master.workers[workerAddr]
-				worker.memoryInUse -= task.requestsMemory
-			}
-			delete(task.files, outputFile.FileID)
-			task.outputFiles[outputFile.FileID] = outputFile
-		}
-	}
+		worker := master.workers[workerAddr]
+		worker.memoryInUse -= task.requestsMemory
 
+		task.outputFiles[outputFile.FileID] = outputFile
+	}
+}
+
+func (master *Master) assignTasks() (TaskAssignment, error) {
 	for _, t := range master.tasks {
 		if t.IsCompleted() && t.taskType == contracts.TaskTypeMap {
-			filesByRegion := make(map[uint32]map[contracts.FileID]pendingFile)
+			outputFiles := mapsext.Values(t.outputFiles)
+			filesGroupedByRegion := slicesext.GroupBy(outputFiles, func(file contracts.OutputFile) uint32 {
+				return file.Region()
+			})
 
-			for _, file := range t.outputFiles {
-				region := file.Region()
-				if _, ok := filesByRegion[region]; !ok {
-					filesByRegion[region] = make(map[contracts.FileID]pendingFile)
-				}
-				filesByRegion[region][file.FileID] = pendingFile{
-					fileID:    file.FileID,
-					filePath:  file.FilePath,
-					sizeBytes: file.SizeBytes,
-				}
-			}
-
-			for _, files := range filesByRegion {
-				master.tasks[t.id] = &task{
-					id:             master.getNextTaskID(),
+			for _, files := range filesGroupedByRegion {
+				subtaskID := master.getNextTaskID()
+				master.tasks[subtaskID] = &task{
+					id:             t.id,
+					subtaskID:      subtaskID,
 					requestsMemory: t.requestsMemory,
 					taskType:       contracts.TaskTypeReduce,
 					script:         t.script,
-					files:          files,
-					outputFiles:    make(map[contracts.FileID]contracts.OutputFile),
+					files: slicesext.Map(files, func(file contracts.OutputFile) pendingFile {
+						return pendingFile{
+							fileID:    file.FileID,
+							filePath:  file.FilePath,
+							sizeBytes: file.SizeBytes,
+						}
+					}),
+					outputFiles: make(map[contracts.FileID]contracts.OutputFile),
 				}
 			}
-			continue
 		}
 
-		if t.taskType == contracts.TaskTypeMap {
-			assignment, err := master.tryAssignMapTask(t)
-			if err != nil {
-				if errors.Is(err, ErrNoWorkerAvailable) {
-					break
-				}
-				return nil, fmt.Errorf("trying to assign map task to a worker: %w", err)
-			}
-
-			assignments = append(assignments, *assignment)
-		}
-
-		if t.taskType == contracts.TaskTypeReduce {
+		if !t.IsCompleted() && t.taskType == contracts.TaskTypeReduce {
 			assignment, err := master.tryAssignReduceTask(t)
 			if err != nil {
 				if errors.Is(err, ErrNoWorkerAvailable) {
@@ -347,26 +337,53 @@ func (master *Master) OnMapTasksCompletedReceived(workerAddr contracts.WorkerAdd
 				return nil, fmt.Errorf("trying to assign reduce task to a worker: %w", err)
 			}
 
-			assignments = append(assignments, *assignment)
+			return assignment, nil
+		}
+
+		if !t.IsCompleted() && t.taskType == contracts.TaskTypeMap {
+			assignment, err := master.tryAssignMapTask(t)
+			if err != nil {
+				if errors.Is(err, ErrNoWorkerAvailable) {
+					break
+				}
+				return nil, fmt.Errorf("trying to assign map task to a worker: %w", err)
+			}
+
+			return assignment, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (master *Master) AssignTasks() ([]TaskAssignment, error) {
+	assignments := make([]TaskAssignment, 0)
+
+	for _, task := range master.tasks {
+		if task.taskType == contracts.TaskTypeMap {
+			assignment, err := master.tryAssignMapTask(task)
+			if err != nil {
+				return nil, fmt.Errorf("trying to assign map task to worker: %w", err)
+			}
+			assignments = append(assignments, assignment)
+		} else if task.taskType == contracts.TaskTypeReduce {
+			assignment, err := master.tryAssignReduceTask(task)
+			if err != nil {
+				return nil, fmt.Errorf("trying to assign reduce task to worker: %w", err)
+			}
+			assignments = append(assignments, assignment)
+		} else {
+			return nil, fmt.Errorf("unknown task type: %+v", task.taskType)
 		}
 	}
 
 	return assignments, nil
 }
 
-func partitionFilePathsToPendingFiles(partitionFilePaths []string) map[contracts.FileID]pendingFile {
-	files := make(map[contracts.FileID]pendingFile, len(partitionFilePaths))
-	for i, filePath := range partitionFilePaths {
-		fileID := contracts.FileID(i + 1)
-		files[fileID] = pendingFile{fileID: fileID, filePath: filePath}
-	}
-	return files
-}
-
 // Assigns pending tasks to idle workers.
 func (master *Master) tryAssignMapTask(task *task) (*MapTaskAssignment, error) {
 	// Try to find a file that's not assigned to a worker.
-	for _, pendingFile := range task.files {
+	for i, pendingFile := range task.files {
 		if pendingFile.isAssignedToWorker() {
 			continue
 		}
@@ -377,15 +394,15 @@ func (master *Master) tryAssignMapTask(task *task) (*MapTaskAssignment, error) {
 		}
 
 		mapTask := contracts.MapTask{
-			ID:       task.id,
-			Script:   task.script,
-			FileID:   pendingFile.fileID,
-			FilePath: pendingFile.filePath,
+			ID:                  task.id,
+			Script:              task.script,
+			FileID:              pendingFile.fileID,
+			FilePath:            pendingFile.filePath,
+			NumberOfReduceTasks: task.numberOfReduceTasks,
 		}
 
-		pendingFile := task.files[pendingFile.fileID]
 		pendingFile.workerAddr = worker.addr
-		task.files[pendingFile.fileID] = pendingFile
+		task.files[i] = pendingFile
 		worker.memoryInUse += task.requestsMemory
 
 		return &MapTaskAssignment{

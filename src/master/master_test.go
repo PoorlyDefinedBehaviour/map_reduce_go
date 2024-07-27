@@ -131,9 +131,7 @@ func TestTryAssignMapTasks(t *testing.T) {
 		RequestsMemory:      100 * memory.Mib,
 	})
 	require.NoError(t, err)
-	out, err = m.onNewTask(input)
-	require.NoError(t, err)
-	assert.Empty(t, out)
+	require.NoError(t, m.onNewTask(input))
 
 	fmt.Printf("\n\naaaaaaa m.workers %+v\n\n", m.workers)
 	// assignment, err := m.tryAssignMapTask(&task{id: 1, files: map[contracts.FileID]pendingFile{
@@ -157,7 +155,8 @@ func TestOnMapTasksCompletedReceived(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerAddr: "127.0.0.1:8080", MemoryAvailable: 500 * memory.Mib})
+	workerAddr := "127.0.0.1:8080"
+	out, err := m.OnMessage(ctx, &HeartbeatMessage{WorkerAddr: workerAddr, MemoryAvailable: 500 * memory.Mib})
 	require.NoError(t, err)
 	assert.Empty(t, out)
 
@@ -167,12 +166,26 @@ func TestOnMapTasksCompletedReceived(t *testing.T) {
 	input, err := NewValidatedInput(contracts.Input{
 		File:                inputFile.Name(),
 		NumberOfMapTasks:    3,
-		NumberOfReduceTasks: 3,
-		NumberOfPartitions:  3,
+		NumberOfReduceTasks: 1,
+		NumberOfPartitions:  1,
 		RequestsMemory:      100 * memory.Mib,
 	})
 	require.NoError(t, err)
-	out, err = m.onNewTask(input)
-	require.NoError(t, err)
-	panic("TODO")
+	require.NoError(t, m.onNewTask(input))
+
+	assert.Equal(t, 1, len(out))
+	assert.Equal(t, workerAddr, out[0].GetWorkerAddr())
+
+	// fmt.Printf("\n\naaaaaaa out[0].Task.FileID %+v\n\n", out[0].Task.FileID)
+	// m.OnMapTaskCompletedReceived(out[0].GetWorkerAddr(), contracts.CompletedTask{
+	// 	TaskID: out[0].Task.ID,
+	// 	OutputFiles: []contracts.OutputFile{
+	// 		{
+	// 			FileID:    out[0].Task.FileID,
+	// 			FilePath:  "path_1",
+	// 			SizeBytes: 10,
+	// 		},
+	// 	},
+	// })
+	// require.NoError(t, err)
 }

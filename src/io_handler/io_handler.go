@@ -82,9 +82,13 @@ func (handler *MasterIOHandler) OnMapTasksCompletedReceived(workerAddr contracts
 	handler.mu.Lock()
 	defer handler.mu.Unlock()
 
-	assignments, err := handler.master.OnMapTasksCompletedReceived(workerAddr, tasks)
+	for _, task := range tasks {
+		handler.master.OnMapTaskCompletedReceived(workerAddr, task)
+	}
+
+	assignments, err := handler.master.AssignTasks()
 	if err != nil {
-		return fmt.Errorf("handling map tasks completed message: %w", err)
+		return fmt.Errorf("trying to assign tasks: %w", err)
 	}
 
 	for _, assignment := range assignments {
@@ -118,15 +122,21 @@ func (handler *MasterIOHandler) OnMessage(ctx context.Context, msg master.InputM
 	}
 
 	for _, assignment := range assignments {
-		client, err := handler.getOrCreateClient(assignment.WorkerAddr)
+		client, err := handler.getOrCreateClient(assignment.GetWorkerAddr())
 		if err != nil {
 			return fmt.Errorf("getting worker client: %w", err)
 		}
 
-		if err := client.AssignMapTask(ctx, assignment.Task); err != nil {
-			return fmt.Errorf("assigning map task to worker: %w", err)
+		switch assignment := assignment.(type) {
+		case master.MapTaskAssignment:
+			if err := client.AssignMapTask(context.Background(), assignment.Task); err != nil {
+				return fmt.Errorf("assigning map task to worker: %w", err)
+			}
+		case master.ReduceTaskAssignment:
+			if err := client.AssignReduceTask(context.Background(), assignment.Task); err != nil {
+				return fmt.Errorf("assigning map task to worker: %w", err)
+			}
 		}
 	}
-
 	return nil
 }
