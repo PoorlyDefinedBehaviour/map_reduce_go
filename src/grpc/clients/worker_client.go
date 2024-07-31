@@ -37,10 +37,11 @@ func NewWorkerClient(config WorkerClientConfig) (*WorkerClient, error) {
 func (client *WorkerClient) AssignMapTask(ctx context.Context, task contracts.MapTask) error {
 	_, err := withReconnect(client.conn, func() (*proto.AssignMapTaskReply, error) {
 		return client.grpcClient.AssignMapTask(ctx, &proto.AssignMapTaskRequest{
-			TaskID:   uint64(task.ID),
-			Script:   task.Script,
-			FileID:   uint64(task.FileID),
-			FilePath: task.FilePath,
+			TaskID:              uint64(task.ID),
+			Script:              task.Script,
+			FileID:              uint64(task.FileID),
+			FilePath:            task.FilePath,
+			NumberOfReduceTasks: task.NumberOfReduceTasks,
 		})
 	})
 	if err != nil {

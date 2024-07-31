@@ -98,11 +98,11 @@ func (handler *MasterIOHandler) OnMapTasksCompletedReceived(workerAddr contracts
 		}
 
 		switch assignment := assignment.(type) {
-		case master.MapTaskAssignment:
+		case *master.MapTaskAssignment:
 			if err := client.AssignMapTask(context.Background(), assignment.Task); err != nil {
 				return fmt.Errorf("assigning map task to worker: %w", err)
 			}
-		case master.ReduceTaskAssignment:
+		case *master.ReduceTaskAssignment:
 			if err := client.AssignReduceTask(context.Background(), assignment.Task); err != nil {
 				return fmt.Errorf("assigning map task to worker: %w", err)
 			}
@@ -128,14 +128,16 @@ func (handler *MasterIOHandler) OnMessage(ctx context.Context, msg master.InputM
 		}
 
 		switch assignment := assignment.(type) {
-		case master.MapTaskAssignment:
+		case *master.MapTaskAssignment:
 			if err := client.AssignMapTask(context.Background(), assignment.Task); err != nil {
 				return fmt.Errorf("assigning map task to worker: %w", err)
 			}
-		case master.ReduceTaskAssignment:
+		case *master.ReduceTaskAssignment:
 			if err := client.AssignReduceTask(context.Background(), assignment.Task); err != nil {
 				return fmt.Errorf("assigning map task to worker: %w", err)
 			}
+		default:
+			panic(fmt.Sprintf("unexpected assignment type, did you forget to add it to the switch statement?: %T %+v", assignment, assignment))
 		}
 	}
 	return nil

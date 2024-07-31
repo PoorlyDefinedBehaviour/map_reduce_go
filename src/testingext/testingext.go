@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 func TempDir() string {
@@ -64,4 +66,11 @@ func WriteFile(path string, data string) *os.File {
 		panic(err)
 	}
 	return file
+}
+
+func MustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	buffer, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return string(buffer)
 }

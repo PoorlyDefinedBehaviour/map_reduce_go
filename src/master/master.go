@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -12,7 +13,10 @@ import (
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/slicesext"
 )
 
-var ErrNoWorkerAvailable = errors.New("no worker is available")
+var (
+	ErrNoWorkerAvailable = errors.New("no worker is available")
+	ErrNoTaskAvailable   = errors.New("no task is available")
+)
 
 type InputMessage interface {
 	inputMessage() string
@@ -120,7 +124,7 @@ type MapTaskAssignment struct {
 	Task contracts.MapTask
 }
 
-func (t MapTaskAssignment) GetWorkerAddr() string {
+func (t *MapTaskAssignment) GetWorkerAddr() string {
 	return t.WorkerAddr
 }
 
@@ -131,7 +135,7 @@ type ReduceTaskAssignment struct {
 	Task contracts.ReduceTask
 }
 
-func (t ReduceTaskAssignment) GetWorkerAddr() string {
+func (t *ReduceTaskAssignment) GetWorkerAddr() string {
 	return t.WorkerAddr
 }
 
@@ -246,9 +250,11 @@ func (master *Master) onHeartbeatReceived(msg *HeartbeatMessage) error {
 
 // Called when a new task is received. New tasks are sent by clients.
 func (master *Master) onNewTask(input ValidatedInput) error {
+	taskID := master.getNextTaskID()
+
 	partitionFilePaths, err := master.partitioner.Partition(
 		input.value.File,
-		master.Config.WorkspaceFolder,
+		filepath.Join(master.Config.WorkspaceFolder, "master", fmt.Sprint(taskID), "input"),
 		input.value.NumberOfPartitions,
 	)
 	if err != nil {
@@ -264,7 +270,7 @@ func (master *Master) onNewTask(input ValidatedInput) error {
 
 	// Create tasks that will be assigned to workers later.
 	task := &task{
-		id:                  master.getNextTaskID(),
+		id:                  taskID,
 		requestsMemory:      input.value.RequestsMemory,
 		taskType:            contracts.TaskTypeMap,
 		script:              input.value.Script,
@@ -300,7 +306,7 @@ func (master *Master) OnMapTaskCompletedReceived(workerAddr contracts.WorkerAddr
 	}
 }
 
-func (master *Master) assignTasks() (TaskAssignment, error) {
+func (master *Master) assignTask() (TaskAssignment, error) {
 	for _, t := range master.tasks {
 		if t.IsCompleted() && t.taskType == contracts.TaskTypeMap {
 			outputFiles := mapsext.Values(t.outputFiles)
@@ -337,7 +343,9 @@ func (master *Master) assignTasks() (TaskAssignment, error) {
 				return nil, fmt.Errorf("trying to assign reduce task to a worker: %w", err)
 			}
 
-			return assignment, nil
+			if assignment != nil {
+				return assignment, nil
+			}
 		}
 
 		if !t.IsCompleted() && t.taskType == contracts.TaskTypeMap {
@@ -349,35 +357,29 @@ func (master *Master) assignTasks() (TaskAssignment, error) {
 				return nil, fmt.Errorf("trying to assign map task to a worker: %w", err)
 			}
 
-			return assignment, nil
+			if assignment != nil {
+				return assignment, nil
+			}
 		}
 	}
 
-	return nil, nil
+	return nil, ErrNoTaskAvailable
 }
 
 func (master *Master) AssignTasks() ([]TaskAssignment, error) {
 	assignments := make([]TaskAssignment, 0)
 
-	for _, task := range master.tasks {
-		if task.taskType == contracts.TaskTypeMap {
-			assignment, err := master.tryAssignMapTask(task)
-			if err != nil {
-				return nil, fmt.Errorf("trying to assign map task to worker: %w", err)
+	for {
+		assignment, err := master.assignTask()
+		if err != nil {
+			if errors.Is(err, ErrNoTaskAvailable) {
+				return assignments, nil
 			}
-			assignments = append(assignments, assignment)
-		} else if task.taskType == contracts.TaskTypeReduce {
-			assignment, err := master.tryAssignReduceTask(task)
-			if err != nil {
-				return nil, fmt.Errorf("trying to assign reduce task to worker: %w", err)
-			}
-			assignments = append(assignments, assignment)
-		} else {
-			return nil, fmt.Errorf("unknown task type: %+v", task.taskType)
+			return nil, err
 		}
-	}
 
-	return assignments, nil
+		assignments = append(assignments, assignment)
+	}
 }
 
 // Assigns pending tasks to idle workers.

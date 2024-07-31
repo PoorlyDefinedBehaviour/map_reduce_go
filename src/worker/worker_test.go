@@ -47,19 +47,27 @@ func TestOnReduceTaskReceived(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	file1 := testingext.TempFile(testingext.WithDir(dir), testingext.WithFileName("input_1"))
-	defer file1.Close()
-	_, err = file1.WriteString("b 1\na 1\na 1")
-	require.NoError(t, err)
-	file1Info, err := file1.Stat()
+	writer, err := filestorage.New().NewWriter(context.Background(), dir)
 	require.NoError(t, err)
 
-	file2 := testingext.TempFile(testingext.WithDir(dir), testingext.WithFileName("input_2"))
-	defer file2.Close()
-	_, err = file2.WriteString("u 1\ni 1\na 2")
+	require.NoError(t, writer.WriteKeyValue("u", "1", 0))
+	require.NoError(t, writer.WriteKeyValue("i", "1", 0))
+	require.NoError(t, writer.WriteKeyValue("u", "2", 0))
+
+	require.NoError(t, writer.WriteKeyValue("b", "1", 1))
+	require.NoError(t, writer.WriteKeyValue("a", "1", 1))
+	require.NoError(t, writer.WriteKeyValue("a", "1", 1))
+
+	require.NoError(t, writer.Close())
+
+	region0File, err := os.OpenFile(filepath.Join(dir, "region_0"), os.O_RDONLY, 0755)
 	require.NoError(t, err)
-	file2Info, err := file2.Stat()
+	region0FileStat, err := region0File.Stat()
 	require.NoError(t, err)
+
+	region1File, err := os.OpenFile(filepath.Join(dir, "region_1"), os.O_RDONLY, 0755)
+	require.NoError(t, err)
+	region1FileStat, err := region1File.Stat()
 
 	err = worker.OnReduceTaskReceived(context.Background(), contracts.ReduceTask{
 		ID: 1,
@@ -102,13 +110,13 @@ const reduce = (word, nextValueIter, emit) => {
 		Files: []contracts.File{
 			{
 				FileID:    1,
-				SizeBytes: uint64(file1Info.Size()),
-				Path:      file1.Name(),
+				SizeBytes: uint64(region0FileStat.Size()),
+				Path:      region0File.Name(),
 			},
 			{
 				FileID:    2,
-				SizeBytes: uint64(file2Info.Size()),
-				Path:      file2.Name(),
+				SizeBytes: uint64(region1FileStat.Size()),
+				Path:      region1File.Name(),
 			},
 		},
 	})

@@ -112,7 +112,6 @@ func (worker *Worker) HeartbeatControlLoop(ctx context.Context) {
 }
 
 func (worker *Worker) OnReduceTaskReceived(ctx context.Context, task contracts.ReduceTask) (returnErr error) {
-	fmt.Printf("\n\naaaaaaa OnReduceTaskReceived: task %+v\n\n", task)
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
 
@@ -168,23 +167,27 @@ func (worker *Worker) OnReduceTaskReceived(ctx context.Context, task contracts.R
 	}
 	defer jsScript.Close()
 
-	outputFilePath := filepath.Join(worker.config.WorkspaceFolder, fmt.Sprint(task.ID), "outputs", "output")
+	outputFolder := filepath.Join(worker.config.WorkspaceFolder, fmt.Sprint(task.ID), "outputs")
+	if err := os.MkdirAll(outputFolder, 0755); err != nil {
+		return fmt.Errorf("creating output folder: %w", err)
+	}
+	// TODO: should write output to replicated storage instead of local disk
+	outputFilePath := filepath.Join(outputFolder, "output")
 	f, err := os.OpenFile(outputFilePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return fmt.Errorf("creating output file: %w", err)
-	}
-	if err := iterateReduceInput(it, jsScript, f); err != nil {
-		return fmt.Errorf("iterating reduce input file: %w", err)
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
 			returnErr = errors.Join(returnErr, fmt.Errorf("closing ouput file: %w", err))
 		}
 	}()
+	if err := iterateReduceInput(it, jsScript, f); err != nil {
+		return fmt.Errorf("iterating reduce input file: %w", err)
+	}
 	if err := f.Sync(); err != nil {
 		return fmt.Errorf("syncing output file: %w", err)
 	}
-	fmt.Printf("\n\naaaaaaa output file: f.Name() %+v\n\n", f.Name())
 
 	return nil
 }
@@ -357,7 +360,6 @@ func (worker *Worker) splitFiles(folder string, files []contracts.File) ([]strin
 }
 
 func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapTask) error {
-	fmt.Printf("\n\naaaaaaa task %+v\n\n", task)
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
 	if task.ID == 0 {
@@ -408,7 +410,7 @@ func (worker *Worker) OnMapTaskReceived(ctx context.Context, task contracts.MapT
 			return fmt.Errorf("calling user provided partition function: %w", err)
 		}
 
-		if err := writer.WriteKeyValue(key, fmt.Sprintf("%s\n", value), region); err != nil {
+		if err := writer.WriteKeyValue(key, value, region); err != nil {
 			return fmt.Errorf("writing key value: %w", err)
 		}
 
@@ -449,8 +451,8 @@ func iterateReduceInput(it *iterator.LineIterator, jsScript *javascript.Script, 
 			return nil
 		}
 
-		key, _, found := strings.Cut(string(buffer), " ")
-		assert.True(found, "file should contain key value pairs separated by space")
+		key, _, found := strings.Cut(string(buffer), ",")
+		assert.True(found, "file should contain key value pairs separated by ,")
 
 		var previousKey string
 
@@ -461,8 +463,8 @@ func iterateReduceInput(it *iterator.LineIterator, jsScript *javascript.Script, 
 				if done {
 					return "", true
 				}
-				key, value, found := strings.Cut(string(buffer), " ")
-				assert.True(found, "file should contain key value pairs separated by space")
+				key, value, found := strings.Cut(string(buffer), ",")
+				assert.True(found, "file should contain key value pairs separated by ,")
 				if previousKey != "" && key != string(previousKey) {
 					return "", true
 				}
@@ -471,7 +473,6 @@ func iterateReduceInput(it *iterator.LineIterator, jsScript *javascript.Script, 
 				return string(value), false
 			},
 			func(key, value string) error {
-				fmt.Printf("\n\naaaaaaa reduce emit: key %+v value %+v\n\n", key, value)
 				if _, err := out.Write([]byte(fmt.Sprintf("%s %s\n", key, value))); err != nil {
 					return fmt.Errorf("writing output: %w", err)
 				}

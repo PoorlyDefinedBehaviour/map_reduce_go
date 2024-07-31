@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/poorlydefinedbehaviour/map_reduce_go/src/contracts"
 )
@@ -31,7 +32,7 @@ func (f FlushOnCloseFile) getRegionFile(region uint32) (*os.File, error) {
 		return file, nil
 	}
 
-	filePath := fmt.Sprintf("%s/region_%d", f.inner.folder, region)
+	filePath := filepath.Join(f.inner.folder, fmt.Sprintf("region_%d", region))
 	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("opening/creating file: %w", err)
@@ -46,6 +47,17 @@ func (f FlushOnCloseFile) WriteKeyValue(k, v string, region uint32) error {
 	file, err := f.getRegionFile(region)
 	if err != nil {
 		return fmt.Errorf("getting region file: %w", err)
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("getting file stats: %w", err)
+	}
+
+	if info.Size() > 0 {
+		if _, err := file.WriteString("\n"); err != nil {
+			return fmt.Errorf("writing new line: %w", err)
+		}
 	}
 
 	if _, err := file.WriteString(k); err != nil {
