@@ -9,7 +9,7 @@ func Equal[T comparable](expected, value T, msg ...string) {
 
 	if value != expected {
 		if len(msg) > 0 {
-			panic(fmt.Sprintf("expected '%+v' to equal '%+v': %s", value, expected, msg))
+			panic(fmt.Sprintf("expected '%+v' to equal '%+v': %s", value, expected, msg[0]))
 		} else {
 			panic(fmt.Sprintf("expected '%+v' to equal '%+v'", value, expected))
 		}
